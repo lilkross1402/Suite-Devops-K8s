@@ -7,7 +7,10 @@
 # State file: ${KUBEOPS_STATE_FILE} (default: ~/.kubeops/cluster-state.json)
 # Author  : KubeOps-Suite (Principal Platform Engineer)
 # =============================================================================
-set -euo pipefail
+if [[ -n "${_STATE_MANAGER_SH_LOADED:-}" ]]; then
+    return 0
+fi
+_STATE_MANAGER_SH_LOADED=true
 
 # Ensure logger is available
 if ! declare -f log_info &>/dev/null; then

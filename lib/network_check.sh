@@ -6,7 +6,10 @@
 #           checks against local registries and cluster endpoints.
 # Author  : KubeOps-Suite (Principal Platform Engineer)
 # =============================================================================
-set -euo pipefail
+if [[ -n "${_NETWORK_CHECK_SH_LOADED:-}" ]]; then
+    return 0
+fi
+_NETWORK_CHECK_SH_LOADED=true
 
 # Ensure logger is available
 if ! declare -f log_info &>/dev/null; then
