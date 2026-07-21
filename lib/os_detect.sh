@@ -102,7 +102,7 @@ _set_pkg_manager() {
             else
                 log_fatal "apt-get not found on Debian-family system"
             fi
-            PKG_INSTALL="${PKG_MANAGER} install -y --no-install-recommends"
+            PKG_INSTALL="env NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive ${PKG_MANAGER} install -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" --no-install-recommends"
             PKG_UPDATE="${PKG_MANAGER} update -qq"
             PKG_REMOVE="${PKG_MANAGER} remove -y"
             PKG_CLEAN="${PKG_MANAGER} clean && rm -rf /var/lib/apt/lists/*"
