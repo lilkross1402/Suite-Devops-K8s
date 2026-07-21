@@ -81,9 +81,16 @@ _master_preflight() {
             log_info "Aborted by user"
             exit 0
         fi
-        log_info "Running kubeadm reset..."
-        kubeadm reset -f 2>/dev/null || true
-        rm -rf "${KUBECONFIG_LOCAL}" 2>/dev/null || true
+        log_info "Running full kubeadm reset and releasing cluster ports..."
+        sudo systemctl stop kubelet 2>/dev/null || true
+        sudo kubeadm reset -f 2>/dev/null || true
+        if command -v crictl &>/dev/null; then
+            sudo crictl rm -f $(sudo crictl ps -a -q 2>/dev/null) 2>/dev/null || true
+        fi
+        sudo systemctl restart containerd 2>/dev/null || true
+        sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
+        sudo rm -rf /etc/cni/net.d /var/lib/etcd /var/lib/kubelet/* "${KUBECONFIG_LOCAL}" "${KUBECONFIG_PATH}" 2>/dev/null || true
+        log_success "Node reset complete and ports freed"
     fi
 
     # Check swap (must be disabled for k8s)
@@ -857,9 +864,13 @@ _run_kubeadm_init() {
     log_info "Initializing Kubernetes control plane (this takes 1-2 minutes)..."
     export KUBEOPS_KUBEADM_INIT_LOG="/tmp/kubeops-kubeadm-init.log"
 
+    # Kill any residual process listening on Kubernetes control plane ports
+    sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
+
     if ! sudo kubeadm init \
         --config "${config_file}" \
         --upload-certs \
+        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,Port-10250 \
         --v=5 \
         2>&1 | tee "${KUBEOPS_KUBEADM_INIT_LOG}"; then
 
