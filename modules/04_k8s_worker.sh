@@ -376,6 +376,16 @@ _verify_node_joined() {
         log_warn "Node did not reach Ready state within ${timeout}s"
         log_warn "This is normal if CNI is still initializing on the master"
     fi
+
+    # If a HA Virtual IP (VIP) exists in state, configure kubelet.conf to target the VIP
+    local vip_ip
+    vip_ip=$(state_get ".ha.vip" 2>/dev/null || echo "")
+    if [[ -n "${vip_ip}" && "${vip_ip}" != "null" ]]; then
+        log_info "Configurando kubelet del Worker para comunicarse vía la Virtual IP https://${vip_ip}:8443..."
+        sudo sed -i "s|https://.*:6443|https://${vip_ip}:8443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
+        sudo sed -i "s|https://.*:8443|https://${vip_ip}:8443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
+        sudo systemctl restart kubelet 2>/dev/null || true
+    fi
 }
 
 _print_worker_summary() {

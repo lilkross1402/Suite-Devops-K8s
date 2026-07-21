@@ -788,6 +788,7 @@ _build_kubeadm_init_config() {
     if [[ "${endpoint}" != *":"* ]]; then
         endpoint="${endpoint}:6443"
     fi
+    local ep_ip="${endpoint%%:*}"
 
     sudo tee "${config_file}" > /dev/null <<EOF
 ---
@@ -815,6 +816,7 @@ apiServer:
   certSANs:
     - "127.0.0.1"
     - "${master_ip}"
+    - "${ep_ip}"
   extraArgs:
     authorization-mode: Node,RBAC
     enable-admission-plugins: NodeRestriction,PodSecurity
