@@ -918,59 +918,46 @@ _extract_join_credentials() {
 _deploy_cni_online() {
     log_step 5 6 "Desplegando Plugin CNI de Red: ${CNI_PLUGIN} (ONLINE)"
 
+    # Ensure standard CNI binaries exist in /opt/cni/bin for containerd
+    sudo mkdir -p /opt/cni/bin
+    if [[ ! -f /opt/cni/bin/loopback || ! -f /opt/cni/bin/bridge ]]; then
+        log_info "Instalando binarios CNI estándar en /opt/cni/bin..."
+        local cni_url="https://github.com/containernetworking/plugins/releases/download/v1.4.0/cni-plugins-linux-amd64-v1.4.0.tgz"
+        curl -fsSL "${cni_url}" -o /tmp/cni-plugins.tgz 2>/dev/null || true
+        if [[ -f /tmp/cni-plugins.tgz ]]; then
+            sudo tar -xzf /tmp/cni-plugins.tgz -C /opt/cni/bin/ 2>/dev/null || true
+            rm -f /tmp/cni-plugins.tgz
+            log_success "Binarios CNI en /opt/cni/bin instalados"
+        fi
+    fi
+
     case "${CNI_PLUGIN}" in
         cilium)
-            log_info "Iniciando instalación de Cilium CNI..."
-            if command -v helm &>/dev/null; then
-                log_info "Desplegando Cilium CNI vía Helm..."
-                helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
-                helm repo update cilium 2>/dev/null || true
-                helm install cilium cilium/cilium --version 1.15.5 \
-                    --namespace kube-system \
-                    --set nodeinit.enabled=true \
-                    --set ipam.mode=kubernetes \
-                    --kubeconfig="${KUBECONFIG_LOCAL}" || true
-            else
-                if ! command -v cilium &>/dev/null; then
-                    log_info "Instalando Cilium CLI..."
-                    local CILIUM_CLI_VERSION="v0.16.0"
-                    curl -L --fail -o /tmp/cilium-linux-amd64.tar.gz "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-amd64.tar.gz" 2>/dev/null || true
-                    if [[ -f /tmp/cilium-linux-amd64.tar.gz ]]; then
-                        sudo tar xzvfC /tmp/cilium-linux-amd64.tar.gz /usr/local/bin 2>/dev/null || true
-                        rm -f /tmp/cilium-linux-amd64.tar.gz
-                    fi
-                fi
+            log_info "Desplegando Cilium CNI v1.15.5..."
+            local cilium_manifest="https://raw.githubusercontent.com/cilium/cilium/v1.15.5/install/kubernetes/quick-install.yaml"
+            local tmp_cilium="/tmp/cilium-quick-install.yaml"
 
-                if command -v cilium &>/dev/null; then
-                    log_info "Ejecutando cilium install..."
-                    cilium install --kubeconfig="${KUBECONFIG_LOCAL}" || true
-                else
-                    log_info "Aplicando manifiesto oficial de Cilium v1.15..."
-                    local cilium_url="https://raw.githubusercontent.com/cilium/cilium/v1.15/install/kubernetes/quick-install.yaml"
-                    local tmp_cilium="/tmp/cilium-quick-install.yaml"
-                    curl -fsSL "${cilium_url}" -o "${tmp_cilium}" 2>/dev/null || true
-                    if [[ -f "${tmp_cilium}" ]]; then
-                        kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_LOCAL}"
-                        rm -f "${tmp_cilium}"
-                    else
-                        kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
-                    fi
-                fi
+            if curl -fsSL "${cilium_manifest}" -o "${tmp_cilium}"; then
+                kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_PATH}"
+                rm -f "${tmp_cilium}"
+            else
+                log_info "Aplicando Cilium desde URL alternativa..."
+                kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_PATH}"
             fi
             ;;
         calico)
             log_info "Desplegando Calico CNI v3.27.0..."
             local calico_url="https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml"
-            kubectl apply -f "${calico_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
+            kubectl apply -f "${calico_url}" --kubeconfig="${KUBECONFIG_PATH}"
             ;;
         flannel)
             log_info "Desplegando Flannel CNI..."
             local flannel_url="https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml"
-            kubectl apply -f "${flannel_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
+            kubectl apply -f "${flannel_url}" --kubeconfig="${KUBECONFIG_PATH}"
             ;;
         *)
             log_warn "Plugin CNI desconocido '${CNI_PLUGIN}' — desplegando Cilium por defecto"
-            kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
+            kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/v1.15.5/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_PATH}"
             ;;
     esac
 
@@ -1042,24 +1029,23 @@ _setup_kubeconfig() {
 }
 
 _wait_for_control_plane() {
-    log_info "Waiting for control plane components to become Ready..."
+    log_info "Esperando a que los componentes del Control Plane y la red CNI (${CNI_PLUGIN}) estén en estado Ready..."
 
     local timeout=180
-    local interval=10
+    local interval=5
     local elapsed=0
 
     while [[ "${elapsed}" -lt "${timeout}" ]]; do
-        if kubectl get nodes --kubeconfig="${KUBECONFIG_LOCAL}" 2>/dev/null | grep -q "Ready"; then
-            log_success "Control plane is Ready (${elapsed}s)"
+        if kubectl get nodes --kubeconfig="${KUBECONFIG_PATH}" 2>/dev/null | grep -w "Ready" | grep -v "NotReady" &>/dev/null; then
+            log_success "¡El nodo Máster y la red CNI están 100% Ready (${elapsed}s)!"
             return 0
         fi
-        log_debug "Control plane not ready yet (${elapsed}s/${timeout}s)..."
+        log_info "Inicializando red CNI y asignando IP a pods (${elapsed}s/${timeout}s)..."
         sleep "${interval}"
         elapsed=$(( elapsed + interval ))
     done
 
-    log_warn "Control plane did not become Ready within ${timeout}s"
-    log_warn "This can be normal — CNI may still be initializing"
+    log_warn "El clúster continúa inicializando pods en segundo plano."
     return 0
 }
 
