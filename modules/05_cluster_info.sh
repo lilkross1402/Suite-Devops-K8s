@@ -73,6 +73,7 @@ _show_join_commands() {
             if ! grep -q "anonymous-auth=true" /etc/kubernetes/manifests/kube-apiserver.yaml; then
                 sudo sed -i '/anonymous-auth/d' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
                 sudo sed -i '/- --authorization-mode=Node,RBAC/a \    - --anonymous-auth=true' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
+                sudo pkill -9 kube-apiserver 2>/dev/null || true
             fi
         fi
 
