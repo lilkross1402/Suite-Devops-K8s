@@ -25,13 +25,13 @@ _show_nodes() {
         kubeconfig="/etc/kubernetes/admin.conf"
     fi
 
-    log_section "Cluster Nodes"
+    log_section "Nodos del Clúster"
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         kubectl get nodes -o wide --kubeconfig="${kubeconfig}" 2>/dev/null || \
-            log_warn "kubectl get nodes failed — check kubeconfig"
+            log_warn "kubectl get nodes falló — verifique kubeconfig"
     else
-        log_warn "kubectl not available or kubeconfig not found"
-        log_info "State-stored nodes:"
+        log_warn "kubectl no disponible o kubeconfig no encontrado"
+        log_info "Nodos registrados en el archivo de estado:"
         state_show
     fi
 }
@@ -40,9 +40,9 @@ _show_pods() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
-    log_section "System Pods"
+    log_section "Pods del Sistema (kube-system)"
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
-        kubectl get pods -A --kubeconfig="${kubeconfig}" 2>/dev/null || true
+        kubectl get pods -n kube-system --kubeconfig="${kubeconfig}" 2>/dev/null || true
     fi
 }
 
@@ -50,48 +50,57 @@ _show_resources() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
-    log_section "Resource Usage"
+    log_section "Uso de Recursos"
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         kubectl top nodes --kubeconfig="${kubeconfig}" 2>/dev/null || \
-            log_warn "metrics-server not available (kubectl top requires metrics-server)"
+            log_warn "metrics-server no instalado aún (kubectl top requiere metrics-server)"
     fi
 }
 
 _show_join_commands() {
-    log_section "Join Commands"
+    log_section "Comandos de Unión (Join)"
 
-    local worker_join master_join
-    worker_join=$(state_get ".join.kubeadm_join_worker")
-    master_join=$(state_get ".join.kubeadm_join_master")
+    local token endpoint ca_hash
+    token=$(state_get ".join.token")
+    endpoint=$(state_get ".join.control_plane_endpoint")
+    ca_hash=$(state_get ".join.ca_cert_hash")
 
-    if [[ -n "${worker_join}" && "${worker_join}" != "null" ]]; then
-        printf "\n  ${CLR_BOLD_WHITE}Add a Worker Node:${CLR_RESET}\n"
-        printf "  ${CLR_YELLOW}%s${CLR_RESET}\n\n" "${worker_join}"
+    # Auto-repair token if needed
+    if [[ "${token}" =~ "INFO" || "${token}" =~ "ERROR" || -z "${token}" || "${token}" == "null" ]]; then
+        if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
+            token=$(sudo kubeadm token create 2>/dev/null | head -1 || echo "")
+            ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
+                openssl rsa -pubin -outform der 2>/dev/null | \
+                openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}' || echo "")
+            endpoint=$(net_get_primary_ip)
+            if [[ -n "${token}" && -n "${ca_hash}" ]]; then
+                state_save_join_token "${token}" "${ca_hash}" ""
+            fi
+        fi
     fi
 
-    if [[ -n "${master_join}" && "${master_join}" != "null" ]]; then
-        printf "  ${CLR_BOLD_WHITE}Add a Master (HA) Node:${CLR_RESET}\n"
-        printf "  ${CLR_CYAN}%s${CLR_RESET}\n\n" "${master_join}"
-    fi
-
-    if [[ -z "${worker_join}" || "${worker_join}" == "null" ]]; then
-        log_warn "No join commands stored — initialize the cluster first (Option 2)"
+    if [[ -n "${token}" && "${token}" != "null" && ! "${token}" =~ "INFO" ]]; then
+        printf "\n  ${CLR_BOLD_WHITE}Para agregar un Nodo Worker (Trabajador):${CLR_RESET}\n"
+        printf "  ${CLR_BOLD_YELLOW}kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:%s${CLR_RESET}\n\n" \
+            "${endpoint}" "${token}" "${ca_hash}"
+    else
+        log_warn "Sin comandos de join almacenados — inicialice primero el clúster (Opción 3)"
     fi
 
     # Token validity
-    printf "  ${CLR_BOLD_WHITE}Token Status:${CLR_RESET}\n"
+    printf "  ${CLR_BOLD_WHITE}Estado del Token:${CLR_RESET}\n"
     if state_is_token_valid 2>/dev/null; then
-        printf "  %-28s ${CLR_BOLD_GREEN}VALID${CLR_RESET}\n" "Current Token:"
+        printf "  %-28s ${CLR_BOLD_GREEN}VÁLIDO${CLR_RESET}\n" "Token Actual:"
     else
-        printf "  %-28s ${CLR_BOLD_RED}EXPIRED${CLR_RESET}\n" "Current Token:"
-        printf "\n  ${CLR_YELLOW}Regenerate with (on master):${CLR_RESET}\n"
+        printf "  %-28s ${CLR_BOLD_RED}EXPIRADO / REGENERANDO${CLR_RESET}\n" "Token Actual:"
+        printf "\n  ${CLR_YELLOW}Generar un nuevo token en el máster con:${CLR_RESET}\n"
         printf "  ${CLR_YELLOW}kubeadm token create --print-join-command${CLR_RESET}\n"
     fi
 }
 
 main() {
     log_banner
-    log_section "Cluster Information & Status"
+    log_section "Información y Estado del Clúster"
 
     net_detect_mode
     state_show
@@ -102,8 +111,8 @@ main() {
     _show_join_commands
 
     echo ""
-    log_success "Status report complete"
-    pause "Press [Enter] to return to main menu..."
+    log_success "Reporte de estado completado exitosamente"
+    pause "Presione [Enter] para volver al menú principal..."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

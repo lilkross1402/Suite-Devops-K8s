@@ -440,99 +440,109 @@ state_reset() {
 
 # state_show: prints a human-readable cluster state summary
 state_show() {
-    _ensure_jq
-    _state_init
+    state_ensure_file
 
-    log_section "Cluster State Summary"
+    log_section "Resumen del Estado del Clúster"
 
     local cluster_name initialized network_mode
     cluster_name=$(state_get ".cluster.name")
     initialized=$(state_get ".cluster.initialized")
     network_mode=$(state_get ".cluster.network_mode")
 
-    printf "\n  ${CLR_BOLD_WHITE}Cluster${CLR_RESET}\n"
-    printf "  %-28s %s\n" "Name:"        "${cluster_name:-<not set>}"
-    printf "  %-28s %s\n" "Initialized:" \
-        "$(if [[ "${initialized}" == "true" ]]; then echo "${CLR_BOLD_GREEN}YES${CLR_RESET}"; else echo "${CLR_BOLD_RED}NO${CLR_RESET}"; fi)"
-    printf "  %-28s %s\n" "Network Mode:" "${network_mode:-<not set>}"
-    printf "  %-28s %s\n" "Pod CIDR:"    "$(state_get ".cluster.pod_cidr")"
-    printf "  %-28s %s\n" "Service CIDR:" "$(state_get ".cluster.service_cidr")"
+    printf "\n  ${CLR_BOLD_WHITE}Clúster${CLR_RESET}\n"
+    printf "  %-28s %s\n" "Nombre:"             "${cluster_name:-<no configurado>}"
+    printf "  %-28s %b\n" "Inicializado:"       "$(if [[ "${initialized}" == "true" ]]; then echo "${CLR_BOLD_GREEN}SÍ${CLR_RESET}"; else echo "${CLR_BOLD_RED}NO${CLR_RESET}"; fi)"
+    printf "  %-28s %s\n" "Modo de Red:"        "${network_mode:-<no configurado>}"
+    printf "  %-28s %s\n" "Pod CIDR:"           "$(state_get ".cluster.pod_cidr")"
+    printf "  %-28s %s\n" "Service CIDR:"       "$(state_get ".cluster.service_cidr")"
 
-    printf "\n  ${CLR_BOLD_WHITE}Masters${CLR_RESET}\n"
+    printf "\n  ${CLR_BOLD_WHITE}Nodos Máster (Control Plane)${CLR_RESET}\n"
     local masters
-    masters=$(jq -r '.masters[] | "  \(.role | ascii_upcase)  \(.hostname)  [\(.ip)]  added: \(.added_at)"' \
-        "${KUBEOPS_STATE_FILE}" 2>/dev/null || echo "  (none)")
+    masters=$(jq -r '.masters[] | "  \(.role | ascii_upcase)  \(.hostname)  [\(.ip)]  registrado: \(.added_at)"' \
+        "${KUBEOPS_STATE_FILE}" 2>/dev/null || echo "")
     if [[ -z "${masters}" ]]; then
-        printf "  %s\n" "(none registered)"
+        printf "  %s\n" "(ningún máster registrado)"
     else
         while IFS= read -r line; do
             printf "  ${CLR_GREEN}●${CLR_RESET} %s\n" "${line}"
         done <<< "${masters}"
     fi
 
-    printf "\n  ${CLR_BOLD_WHITE}Workers${CLR_RESET}\n"
+    printf "\n  ${CLR_BOLD_WHITE}Nodos Trabajadores (Workers)${CLR_RESET}\n"
     local workers
-    workers=$(jq -r '.workers[] | "  \(.hostname)  [\(.ip)]  added: \(.added_at)"' \
+    workers=$(jq -r '.workers[] | "  \(.hostname)  [\(.ip)]  registrado: \(.added_at)"' \
         "${KUBEOPS_STATE_FILE}" 2>/dev/null || echo "")
     if [[ -z "${workers}" ]]; then
-        printf "  %s\n" "(none registered)"
+        printf "  %s\n" "(ningún worker registrado aún)"
     else
         while IFS= read -r line; do
             printf "  ${CLR_CYAN}●${CLR_RESET} %s\n" "${line}"
         done <<< "${workers}"
     fi
 
-    printf "\n  ${CLR_BOLD_WHITE}Join Credentials${CLR_RESET}\n"
+    printf "\n  ${CLR_BOLD_WHITE}Credenciales de Unión (Join)${CLR_RESET}\n"
     local token endpoint ca_hash expires_at
     token=$(state_get ".join.token")
     endpoint=$(state_get ".join.control_plane_endpoint")
     ca_hash=$(state_get ".join.ca_cert_hash")
     expires_at=$(state_get ".join.expires_at")
 
-    if [[ -n "${token}" && "${token}" != "null" ]]; then
-        # Mask middle of token for security in display
-        local masked_token="${token:0:6}...${token: -6}"
-        printf "  %-28s %s\n" "Control Plane:" "${endpoint:-N/A}:6443"
-        printf "  %-28s %s\n" "Token:" "${masked_token}"
-        printf "  %-28s sha256:%s\n" "CA Hash:" "${ca_hash:0:16}..."
-        printf "  %-28s %s\n" "Expires:" "${expires_at:-unknown}"
-        if state_is_token_valid 2>/dev/null; then
-            printf "  %-28s %s\n" "Status:" "${CLR_BOLD_GREEN}VALID${CLR_RESET}"
-        else
-            printf "  %-28s %s\n" "Status:" "${CLR_BOLD_RED}EXPIRED${CLR_RESET}"
+    # Auto-repair corrupt token if saved with log text previously
+    if [[ "${token}" =~ "INFO" || "${token}" =~ "ERROR" || "${token}" =~ " " || -z "${token}" ]]; then
+        if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
+            local clean_token clean_hash ep
+            ep="${endpoint:-$(net_get_primary_ip)}"
+            clean_token=$(sudo kubeadm token create 2>/dev/null | head -1 || echo "")
+            clean_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
+                openssl rsa -pubin -outform der 2>/dev/null | \
+                openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}' || echo "")
+            if [[ -n "${clean_token}" && -n "${clean_hash}" ]]; then
+                state_save_join_token "${clean_token}" "${clean_hash}" ""
+                token="${clean_token}"
+                ca_hash="${clean_hash}"
+                endpoint="${ep}"
+            fi
         fi
-    else
-        printf "  %s\n" "(no join credentials stored)"
     fi
 
-    printf "\n  ${CLR_BOLD_WHITE}Registry${CLR_RESET}\n"
+    if [[ -n "${token}" && "${token}" != "null" && ! "${token}" =~ "INFO" ]]; then
+        local masked_token="${token:0:6}...${token: -6}"
+        printf "  %-28s %s\n" "Control Plane Endpoint:" "${endpoint:-N/A}:6443"
+        printf "  %-28s %s\n" "Token de Unión:" "${masked_token}"
+        printf "  %-28s sha256:%s\n" "CA Hash:" "${ca_hash:0:16}..."
+        printf "  %-28s %s\n" "Expiración:" "${expires_at:-desconocido}"
+        if state_is_token_valid 2>/dev/null; then
+            printf "  %-28s %b\n" "Estado del Token:" "${CLR_BOLD_GREEN}VÁLIDO${CLR_RESET}"
+        else
+            printf "  %-28s %b\n" "Estado del Token:" "${CLR_BOLD_RED}EXPIRADO${CLR_RESET}"
+        fi
+    else
+        printf "  %s\n" "(no hay credenciales de join guardadas)"
+    fi
+
+    printf "\n  ${CLR_BOLD_WHITE}Registro de Imágenes (Registry)${CLR_RESET}\n"
     local reg_enabled reg_url
     reg_enabled=$(state_get ".registry.enabled")
     reg_url=$(state_get ".registry.url")
     if [[ "${reg_enabled}" == "true" ]]; then
-        printf "  %-28s %s\n" "Registry URL:" "${CLR_BOLD_GREEN}${reg_url}${CLR_RESET}"
+        printf "  %-28s %b\n" "URL del Registro:" "${CLR_BOLD_GREEN}${reg_url}${CLR_RESET}"
     else
-        printf "  %s\n" "(no local registry configured)"
+        printf "  %s\n" "(sin registro local configurado)"
     fi
 
-    printf "\n  ${CLR_BOLD_WHITE}Join Commands${CLR_RESET}\n"
+    printf "\n  ${CLR_BOLD_WHITE}Comandos de Unión Direccional${CLR_RESET}\n"
     local join_worker
     join_worker=$(state_get ".join.kubeadm_join_worker")
-    if [[ -n "${join_worker}" && "${join_worker}" != "null" ]]; then
-        printf "\n  ${CLR_DIM}# Add a Worker node:${CLR_RESET}\n"
-        printf "  ${CLR_YELLOW}%s${CLR_RESET}\n" "${join_worker}"
-        local join_master
-        join_master=$(state_get ".join.kubeadm_join_master")
-        if [[ -n "${join_master}" && "${join_master}" != "null" ]]; then
-            printf "\n  ${CLR_DIM}# Add a Master (HA) node:${CLR_RESET}\n"
-            printf "  ${CLR_YELLOW}%s${CLR_RESET}\n" "${join_master}"
-        fi
+    if [[ -n "${token}" && ! "${token}" =~ "INFO" && -n "${endpoint}" ]]; then
+        printf "\n  ${CLR_DIM}# Para agregar un Nodo Worker (Trabajador):${CLR_RESET}\n"
+        printf "  ${CLR_YELLOW}kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:%s${CLR_RESET}\n" \
+            "${endpoint}" "${token}" "${ca_hash}"
     else
-        printf "  %s\n" "(cluster not initialized — run Option 2 first)"
+        printf "  %s\n" "(clúster no inicializado — ejecute primero la Opción [3])"
     fi
 
-    printf "\n  ${CLR_DIM}State file: ${KUBEOPS_STATE_FILE}${CLR_RESET}\n"
-    printf "  ${CLR_DIM}Last updated: $(state_get ".kubeops.updated_at")${CLR_RESET}\n\n"
+    printf "\n  ${CLR_DIM}Archivo de estado: ${KUBEOPS_STATE_FILE}${CLR_RESET}\n"
+    printf "  ${CLR_DIM}Última actualización: $(state_get ".kubeops.updated_at")${CLR_RESET}\n\n"
 }
 
 # state_export_kubeconfig: exports the kubeconfig path hint
