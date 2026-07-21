@@ -105,7 +105,7 @@ _set_pkg_manager() {
             else
                 log_fatal "apt-get not found on Debian-family system"
             fi
-            PKG_INSTALL="env NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive ${PKG_MANAGER} install -y -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" --no-install-recommends"
+            PKG_INSTALL="${PKG_MANAGER} install -y --no-install-recommends"
             PKG_UPDATE="${PKG_MANAGER} update -qq"
             PKG_REMOVE="${PKG_MANAGER} remove -y"
             PKG_CLEAN="${PKG_MANAGER} clean && rm -rf /var/lib/apt/lists/*"
@@ -260,14 +260,20 @@ os_install_pkg() {
     fi
 
     log_info "Installing: ${packages[*]}"
-    # shellcheck disable=SC2086
-    if sudo ${PKG_INSTALL} "${packages[@]}"; then
-        log_success "Installed: ${packages[*]}"
-        return 0
+    if [[ "${OS_FAMILY}" == "debian" ]]; then
+        if sudo env NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"; then
+            log_success "Installed: ${packages[*]}"
+            return 0
+        fi
     else
-        log_error "Failed to install: ${packages[*]}"
-        return 1
+        # shellcheck disable=SC2086
+        if sudo ${PKG_INSTALL} "${packages[@]}"; then
+            log_success "Installed: ${packages[*]}"
+            return 0
+        fi
     fi
+    log_error "Failed to install: ${packages[*]}"
+    return 1
 }
 
 # os_ensure_dependencies: installs REQUIRED_PKGS if not already present
