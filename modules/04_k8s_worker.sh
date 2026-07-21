@@ -52,14 +52,8 @@ _worker_preflight() {
     os_check_requirements 1024 2 10 || log_warn "System below recommended specs"
 
     # Network mode detection
+    # Network mode detection
     net_detect_mode
-
-    # Cluster must already be initialized
-    if ! state_is_cluster_initialized; then
-        log_error "No initialized cluster found in state."
-        log_error "Initialize the cluster first by running Option [2] from the main menu."
-        (( errors++ )) || true
-    fi
 
     # Check for existing kubeadm installation
     if [[ -f "/etc/kubernetes/kubelet.conf" ]]; then
@@ -91,33 +85,32 @@ _worker_preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# Load Join Credentials from State
+# Load Join Credentials from State or Prompt Interactively
 # ---------------------------------------------------------------------------
 
 _load_join_credentials() {
-    log_info "Loading join credentials from state manager..."
+    log_info "Cargando credenciales de unión para el nodo Worker..."
 
     local token ca_hash control_plane
-    token=$(state_get ".join.token")
-    ca_hash=$(state_get ".join.ca_cert_hash")
-    control_plane=$(state_get ".join.control_plane_endpoint")
+    token=$(state_get ".join.token" 2>/dev/null || echo "")
+    ca_hash=$(state_get ".join.ca_cert_hash" 2>/dev/null || echo "")
+    control_plane=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "")
 
-    if [[ -z "${token}" || "${token}" == "null" ]]; then
-        log_error "No join token found in state file: ${KUBEOPS_STATE_FILE}"
-        log_error "Either:"
-        log_error "  1. Run [2] Initialize Cluster (First Master) first"
-        log_error "  2. Or set K8S_JOIN_TOKEN, K8S_CA_HASH, K8S_CONTROL_PLANE environment variables"
-        return 1
+    if [[ -z "${control_plane}" || "${control_plane}" == "null" ]]; then
+        printf "\n  ${CLR_BOLD_WHITE}Ingrese los datos del Máster Primario:${CLR_RESET}\n"
+        printf "  IP del Máster Primario [ej. 172.31.32.10]: "
+        read -r control_plane
+    fi
+
+    if [[ -z "${token}" || "${token}" == "null" || "${token}" =~ "INFO" ]]; then
+        printf "  Token de Unión (Token): "
+        read -r token
     fi
 
     if [[ -z "${ca_hash}" || "${ca_hash}" == "null" ]]; then
-        log_error "No CA certificate hash found in state"
-        return 1
-    fi
-
-    if [[ -z "${control_plane}" || "${control_plane}" == "null" ]]; then
-        log_error "No control plane endpoint found in state"
-        return 1
+        printf "  CA Cert Hash (sha256:...): "
+        read -r ca_hash
+        ca_hash="${ca_hash#sha256:}"
     fi
 
     # Allow environment overrides
@@ -125,9 +118,14 @@ _load_join_credentials() {
     JOIN_CA_HASH="${K8S_CA_HASH:-${ca_hash}}"
     CONTROL_PLANE_ENDPOINT="${K8S_CONTROL_PLANE:-${control_plane}}"
 
-    log_success "Join credentials loaded:"
-    printf "  %-28s %s\n" "Control Plane:" "${CONTROL_PLANE_ENDPOINT}:6443"
-    printf "  %-28s %s...\n" "Token:" "${JOIN_TOKEN:0:10}"
+    if [[ -z "${JOIN_TOKEN}" || -z "${JOIN_CA_HASH}" || -z "${CONTROL_PLANE_ENDPOINT}" ]]; then
+        log_error "Faltan parámetros de unión para el Worker."
+        return 1
+    fi
+
+    log_success "Credenciales de unión configuradas:"
+    printf "  %-28s %s\n" "Control Plane Endpoint:" "${CONTROL_PLANE_ENDPOINT}:6443"
+    printf "  %-28s %s...\n" "Token de Unión:" "${JOIN_TOKEN:0:10}"
     printf "  %-28s sha256:%s...\n" "CA Hash:" "${JOIN_CA_HASH:0:16}"
 
     # Check token validity

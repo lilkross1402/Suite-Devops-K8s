@@ -421,40 +421,94 @@ _print_menu() {
 # ---------------------------------------------------------------------------
 
 _handle_add_ha_master() {
-    log_section "Add Master Node (HA)"
+    log_banner
+    log_section "Unir Nodo Máster Secundario (HA Control Plane)"
 
-    if ! state_is_cluster_initialized; then
-        log_error "Cluster not initialized. Run option [3] first."
-        pause
-        return 0
-    fi
+    # Preflight root check & OS
+    os_detect || true
+    net_detect_mode
 
-    local master_join
-    master_join=$(state_get ".join.kubeadm_join_master")
-
-    if [[ -z "${master_join}" || "${master_join}" == "null" ]]; then
-        log_error "No HA join command found."
-        log_info "Regenerate certificate key on the master:"
-        printf "  ${CLR_YELLOW}kubeadm init phase upload-certs --upload-certs${CLR_RESET}\n"
-        printf "  ${CLR_YELLOW}kubeadm token create --print-join-command${CLR_RESET}\n"
-        pause
-        return 0
-    fi
-
-    log_section "HA Master Join Command"
-    printf "\n  ${CLR_BOLD_WHITE}Run the following on the new MASTER node:${CLR_RESET}\n\n"
-    printf "  ${CLR_BOLD_CYAN}%s${CLR_RESET}\n\n" "${master_join}"
-
-    log_info "After joining, set up kubectl on the new master:"
-    printf "  ${CLR_YELLOW}mkdir -p ~/.kube && cp /etc/kubernetes/admin.conf ~/.kube/config${CLR_RESET}\n\n"
-
-    if confirm "Register this node's IP in state after joining?"; then
-        printf "  Enter the new master's IP: "
-        read -r ha_ip
-        if [[ -n "${ha_ip}" ]]; then
-            state_save_master "${ha_ip}" "" "ha-replica"
-            log_success "HA master registered in state"
+    # Ensure containerd & k8s binaries installed
+    if ! command -v kubeadm &>/dev/null; then
+        log_info "Instalando binarios de Kubernetes en este máster secundario..."
+        if net_is_online; then
+            sudo install -m 0755 -d /etc/apt/keyrings 2>/dev/null || true
+            curl -fsSL "https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key" | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null || true
+            echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list > /dev/null
+            sudo apt-get update -qq && sudo apt-get install -y kubelet kubeadm kubectl
         fi
+    fi
+
+    # Read credentials from local state if available, otherwise prompt
+    local token ca_hash control_plane cert_key
+    token=$(state_get ".join.token" 2>/dev/null || echo "")
+    ca_hash=$(state_get ".join.ca_cert_hash" 2>/dev/null || echo "")
+    control_plane=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "")
+    cert_key=$(state_get ".join.certificate_key" 2>/dev/null || echo "")
+
+    if [[ -z "${control_plane}" || "${control_plane}" == "null" ]]; then
+        printf "\n  ${CLR_BOLD_WHITE}Ingrese los datos del Máster Primario:${CLR_RESET}\n"
+        printf "  IP del Máster Primario: "
+        read -r control_plane
+    fi
+
+    if [[ -z "${token}" || "${token}" == "null" || "${token}" =~ "INFO" ]]; then
+        printf "  Token de Unión (Token): "
+        read -r token
+    fi
+
+    if [[ -z "${ca_hash}" || "${ca_hash}" == "null" ]]; then
+        printf "  CA Cert Hash (sha256:...): "
+        read -r ca_hash
+        ca_hash="${ca_hash#sha256:}"
+    fi
+
+    if [[ -z "${cert_key}" || "${cert_key}" == "null" ]]; then
+        printf "  Certificate Key (64 caracteres): "
+        read -r cert_key
+    fi
+
+    if [[ -z "${control_plane}" || -z "${token}" || -z "${ca_hash}" || -z "${cert_key}" ]]; then
+        log_error "Faltan parámetros requeridos para la unión del Máster HA."
+        pause
+        return 1
+    fi
+
+    log_info "Uniendo esta máquina como Control Plane Secundario a ${control_plane}:6443..."
+
+    sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
+
+    if sudo kubeadm join "${control_plane}:6443" \
+        --token "${token}" \
+        --discovery-token-ca-cert-hash "sha256:${ca_hash}" \
+        --control-plane \
+        --certificate-key "${cert_key}" \
+        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257; then
+
+        log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
+
+        # Configure kubeconfig
+        sudo mkdir -p /root/.kube
+        sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
+        sudo chmod 600 /root/.kube/config 2>/dev/null || true
+
+        if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+            local u_home
+            u_home=$(eval echo "~${SUDO_USER}")
+            sudo mkdir -p "${u_home}/.kube"
+            sudo cp -f /etc/kubernetes/admin.conf "${u_home}/.kube/config" 2>/dev/null || true
+            sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${u_home}/.kube" 2>/dev/null || true
+            sudo chmod 600 "${u_home}/.kube/config" 2>/dev/null || true
+        fi
+
+        state_save_master "$(net_get_primary_ip)" "$(hostname)" "ha-replica"
+        state_save_join_token "${token}" "${ca_hash}" "${cert_key}"
+        state_set ".cluster.initialized" "true"
+        state_set ".join.control_plane_endpoint" "${control_plane}"
+
+        log_success "kubeconfig configurado automáticamente en este Máster HA."
+    else
+        log_error "Falló la unión con kubeadm join."
     fi
 
     pause
