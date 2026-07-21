@@ -157,6 +157,7 @@ EOF
 
     log_info "Actualizando certificados SSL del API Server para incluir la VIP ${vip_ip} en certSANs..."
     if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/manifests/kube-apiserver.yaml ]]; then
+        sudo rm -f /etc/kubernetes/pki/apiserver.crt /etc/kubernetes/pki/apiserver.key 2>/dev/null || true
         sudo kubeadm init phase certs apiserver --apiserver-cert-extra-sans "${vip_ip}" 2>/dev/null || true
         sudo pkill -9 kube-apiserver 2>/dev/null || true
     fi
