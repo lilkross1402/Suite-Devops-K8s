@@ -482,6 +482,18 @@ _handle_add_ha_master() {
     sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
     os_set_sysctl 2>/dev/null || true
 
+    log_info "Verificando conectividad con el API Server (${control_plane}:6443)..."
+    if ! curl -k --connect-timeout 5 "https://${control_plane}:6443/version" &>/dev/null; then
+        log_warn "No se pudo conectar a https://${control_plane}:6443."
+        log_warn "Asegúrese de que el Máster Primario tenga el API Server activo y que el puerto 6443/TCP esté permitido en el Security Group de AWS."
+        if ! confirm "¿Desea intentar la unión de todas formas?"; then
+            pause
+            return 1
+        fi
+    else
+        log_success "Conexión exitosa con el API Server (${control_plane}:6443)"
+    fi
+
     log_info "Uniendo esta máquina como Control Plane Secundario a ${control_plane}:6443..."
 
     sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
@@ -491,7 +503,8 @@ _handle_add_ha_master() {
         --discovery-token-ca-cert-hash "sha256:${ca_hash}" \
         --control-plane \
         --certificate-key "${cert_key}" \
-        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward; then
+        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward \
+        --v=5; then
 
         log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 
