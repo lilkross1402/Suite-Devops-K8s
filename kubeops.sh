@@ -394,6 +394,9 @@ _print_menu() {
     # Utilities section
     _print_menu_section "  🔧  UTILIDADES"
 
+    _print_menu_item "C" "🧹" "Limpieza Profunda del Sistema" \
+        "Purgar k8s, containerd, docker y datos CNI"
+
     _print_menu_item "S" "💾" "Ver Estado del Clúster" \
         "Mostrar resumen JSON de estado"
 
@@ -510,6 +513,11 @@ _main_loop() {
             7) _run_module "6" ;;
             8) _run_module "7" ;;
             9) _run_module "8" ;;
+
+            [cC])
+                clear
+                system_deep_cleanup
+                pause ;;
 
             [sS])
                 clear

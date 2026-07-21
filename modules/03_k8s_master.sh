@@ -73,24 +73,22 @@ _master_preflight() {
         log_warn "Hostname '${hostname}' may not be resolvable. Ensure /etc/hosts is correct."
     fi
 
-    # Check for existing cluster
-    if [[ -f "${KUBECONFIG_PATH}" ]]; then
-        log_warn "Existing kubeconfig found at ${KUBECONFIG_PATH}"
-        log_warn "This node may already be part of a cluster."
-        if ! confirm "Reset and re-initialize this node?"; then
-            log_info "Aborted by user"
-            exit 0
+    # Check for existing installations (k8s, containerd, docker, CNI)
+    local existing
+    existing=$(system_detect_existing_installations 2>/dev/null || echo "")
+    if [[ -n "${existing}" || -f "${KUBECONFIG_PATH}" ]]; then
+        log_warn "Se detectaron componentes/instalaciones previas en el servidor:"
+        printf "         ${CLR_BOLD_YELLOW}%s${CLR_RESET}\n\n" "${existing:-Kubernetes kubeconfig}"
+        if confirm "¿Desea ejecutar la LIMPIEZA PROFUNDA (purga completa de paquetes k8s, containerd/docker, datos CNI y puertos)?"; then
+            system_deep_cleanup
+        else
+            log_info "Procediendo con reset estándar..."
+            sudo systemctl stop kubelet 2>/dev/null || true
+            sudo kubeadm reset -f 2>/dev/null || true
+            sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
+            sudo rm -rf /etc/cni/net.d /var/lib/etcd /var/lib/kubelet/* "${KUBECONFIG_LOCAL}" "${KUBECONFIG_PATH}" 2>/dev/null || true
+            log_success "Reset básico completado"
         fi
-        log_info "Running full kubeadm reset and releasing cluster ports..."
-        sudo systemctl stop kubelet 2>/dev/null || true
-        sudo kubeadm reset -f 2>/dev/null || true
-        if command -v crictl &>/dev/null; then
-            sudo crictl rm -f $(sudo crictl ps -a -q 2>/dev/null) 2>/dev/null || true
-        fi
-        sudo systemctl restart containerd 2>/dev/null || true
-        sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
-        sudo rm -rf /etc/cni/net.d /var/lib/etcd /var/lib/kubelet/* "${KUBECONFIG_LOCAL}" "${KUBECONFIG_PATH}" 2>/dev/null || true
-        log_success "Node reset complete and ports freed"
     fi
 
     # Check swap (must be disabled for k8s)

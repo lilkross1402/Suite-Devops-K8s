@@ -501,3 +501,106 @@ os_check_requirements() {
     log_success "All system requirements satisfied"
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# System Installation Detection & Deep Purge Cleanup
+# ---------------------------------------------------------------------------
+
+system_detect_existing_installations() {
+    local detected=()
+    command -v kubeadm &>/dev/null && detected+=("kubeadm ($(kubeadm version -o short 2>/dev/null || echo 'v1.x'))")
+    command -v kubelet &>/dev/null && detected+=("kubelet")
+    command -v kubectl &>/dev/null && detected+=("kubectl")
+    command -v containerd &>/dev/null && detected+=("containerd ($(containerd --version 2>/dev/null | awk '{print $3}' || echo 'v1.x'))")
+    command -v docker &>/dev/null && detected+=("Docker")
+    [[ -d /etc/kubernetes ]] && detected+=("/etc/kubernetes")
+    [[ -d /var/lib/etcd ]] && detected+=("/var/lib/etcd")
+    [[ -d /etc/cni/net.d ]] && detected+=("Redes CNI (/etc/cni/net.d)")
+
+    echo "${detected[*]:-}"
+}
+
+system_deep_cleanup() {
+    log_section "🧹 Limpieza Profunda del Sistema (Purga Total)"
+
+    local existing
+    existing=$(system_detect_existing_installations)
+    if [[ -n "${existing}" ]]; then
+        log_warn "Se detectaron componentes de Kubernetes / Container Runtime instalados previamente:"
+        printf "         ${CLR_BOLD_YELLOW}%s${CLR_RESET}\n\n" "${existing}"
+    else
+        log_info "No se detectaron instalaciones activas previas, pero se procederá con el saneamiento de archivos."
+    fi
+
+    if ! confirm "¿Desea realizar la LIMPIEZA PROFUNDA (purga clúster, containerd, docker y datos CNI)?"; then
+        log_info "Limpieza cancelada por el usuario."
+        return 0
+    fi
+
+    log_info "[1/8] Ejecutando kubeadm reset..."
+    if command -v kubeadm &>/dev/null; then
+        sudo kubeadm reset -f 2>/dev/null || true
+    fi
+
+    log_info "[2/8] Deteniendo servicios de contenedores y K8s..."
+    sudo systemctl stop kubelet containerd docker docker.socket 2>/dev/null || true
+
+    if command -v crictl &>/dev/null; then
+        sudo crictl rm -f $(sudo crictl ps -a -q 2>/dev/null) 2>/dev/null || true
+    fi
+    if command -v docker &>/dev/null; then
+        sudo docker rm -f $(sudo docker ps -a -q 2>/dev/null) 2>/dev/null || true
+    fi
+
+    log_info "[3/8] Liberando puertos de Kubernetes (6443, 10259, 10257, 2379, 2380, 10250)..."
+    sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 10250/tcp 2>/dev/null || true
+
+    log_info "[4/8] Purgando paquetes de Kubernetes, containerd y Docker..."
+    if command -v apt-get &>/dev/null; then
+        sudo apt-mark unhold kubelet kubeadm kubectl containerd 2>/dev/null || true
+        sudo apt-get purge -y kubelet kubeadm kubectl cri-tools kubernetes-cni containerd containerd.io docker-ce docker-ce-cli 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf remove -y kubelet kubeadm kubectl cri-tools kubernetes-cni containerd containerd.io docker-ce docker-ce-cli 2>/dev/null || true
+    fi
+
+    log_info "[5/8] Desmontando puntos de montaje de kubelet..."
+    local kubelet_mounts
+    kubelet_mounts=$(mount | grep '/var/lib/kubelet' | awk '{print $3}' || echo "")
+    if [[ -n "${kubelet_mounts}" ]]; then
+        for m in ${kubelet_mounts}; do
+            sudo umount -f "${m}" 2>/dev/null || true
+        done
+    fi
+
+    log_info "[6/8] Limpiando interfaces de red CNI (cni0, flannel, cilium)..."
+    sudo ip link delete cni0 2>/dev/null || true
+    sudo ip link delete flannel.1 2>/dev/null || true
+    sudo ip link delete cilium_host 2>/dev/null || true
+    sudo ip link delete cilium_net 2>/dev/null || true
+    sudo ip link delete cilium_vxlan 2>/dev/null || true
+
+    log_info "[7/8] Reiniciando reglas de iptables y firewall..."
+    sudo iptables -F 2>/dev/null || true
+    sudo iptables -t nat -F 2>/dev/null || true
+    sudo iptables -t mangle -F 2>/dev/null || true
+    sudo iptables -X 2>/dev/null || true
+
+    log_info "[8/8] Eliminando directorios de configuración, certificados y datos..."
+    sudo rm -rf /etc/kubernetes \
+                /var/lib/kubelet \
+                /var/lib/etcd \
+                /etc/cni/net.d \
+                /var/lib/cni \
+                /var/lib/containerd \
+                /etc/containerd \
+                /var/lib/docker \
+                /etc/docker \
+                /root/.kube \
+                /home/*/.kube \
+                ~/.kubeops \
+                /tmp/kubeops* \
+                /tmp/cilium* 2>/dev/null || true
+
+    log_success "🎉 Limpieza profunda completada. El servidor está 100% limpio para un nuevo despliegue."
+}
