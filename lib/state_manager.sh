@@ -440,7 +440,8 @@ state_reset() {
 
 # state_show: prints a human-readable cluster state summary
 state_show() {
-    state_ensure_file
+    _ensure_jq
+    _state_init
 
     log_section "Resumen del Estado del Clúster"
 
