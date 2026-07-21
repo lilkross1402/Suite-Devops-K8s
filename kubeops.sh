@@ -499,7 +499,7 @@ _handle_add_ha_master() {
     sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
 
     log_info "Ejecutando kubeadm join directamente con la Certificate Key y Token de Control Plane..."
-    if ! sudo kubeadm join "${control_plane}:6443" \
+    if sudo kubeadm join "${control_plane}:6443" \
         --token "${token}" \
         --discovery-token-unsafe-skip-ca-verification \
         --control-plane \
@@ -507,12 +507,7 @@ _handle_add_ha_master() {
         --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward \
         --v=5; then
 
-        log_error "Falló la unión del Máster HA con kubeadm join."
-        pause
-        return 1
-    fi
-
-    log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
+        log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 
         # Configure kubeconfig
         sudo mkdir -p /root/.kube
