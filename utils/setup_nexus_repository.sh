@@ -117,15 +117,16 @@ setup_nexus_server() {
         log_success "Contenedor Nexus 3 iniciado en http://${public_ip}:${nexus_port} y registro:${docker_port}"
     fi
 
-    # 2. Esperar arranque de Nexus
-    log_info "Esperando inicialización de Nexus (esto puede tomar 30-60 segundos)..."
+    # 2. Esperar arranque completo de Nexus Java Web Server
+    log_info "Esperando inicialización completa de Nexus 3 (esto puede tomar 60-90 segundos)..."
     local attempt=0
-    local max_attempts=30
+    local max_attempts=40
     while [[ ${attempt} -lt ${max_attempts} ]]; do
-        if sudo docker exec nexus test -f /nexus-data/admin.password 2>/dev/null; then
+        if sudo curl -s -f "http://localhost:8081/service/rest/v1/status" &>/dev/null; then
+            log_success "Servidor Web y API REST de Nexus activos y respondiendo en puerto 8081."
             break
         fi
-        sleep 3
+        sleep 4
         attempt=$((attempt + 1))
     done
 
@@ -136,9 +137,18 @@ setup_nexus_server() {
 
     log_success "Nexus 3 listo. Contraseña inicial de admin: ${CLR_BOLD_YELLOW}${admin_pass}${CLR_RESET}"
 
-    # 3. Configurar Repositorio Docker Hosted y Realms en Nexus vía API REST
+    # 3. Configurar Repositorio Docker Hosted, Anonymous Access y Realms en Nexus vía API REST
+    log_info "Habilitando Acceso Anónimo en Nexus..."
+    sudo curl -s -u "admin:${admin_pass}" -X PUT "http://localhost:8081/service/rest/v1/security/anonymous" \
+         -H "Content-Type: application/json" \
+         -d '{"enabled": true, "userId": "anonymous", "realmName": "NexusAuthorizingRealm"}' 2>/dev/null || true
+
+    log_info "Activando Docker Bearer Token Realm en Nexus..."
+    sudo curl -s -u "admin:${admin_pass}" -X PUT "http://localhost:8081/service/rest/v1/security/realms/active" \
+         -H "Content-Type: application/json" \
+         -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' 2>/dev/null || true
+
     log_info "Configurando Repositorio Docker Hosted en puerto ${docker_port} vía API REST..."
-    sleep 5
     sudo curl -s -u "admin:${admin_pass}" -X POST "http://localhost:8081/service/rest/v1/repositories/docker/hosted" \
          -H "Content-Type: application/json" \
          -d '{
@@ -156,11 +166,6 @@ setup_nexus_server() {
              "httpPort": 8082
            }
          }' 2>/dev/null || true
-
-    log_info "Activando Docker Bearer Token Realm en Nexus..."
-    sudo curl -s -u "admin:${admin_pass}" -X PUT "http://localhost:8081/service/rest/v1/security/realms/active" \
-         -H "Content-Type: application/json" \
-         -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' 2>/dev/null || true
 
     # 4. Configurar Insecure Registry en Docker local para Push
     log_info "Configurando daemon de Docker local para permitir la IP ${public_ip}:${docker_port}..."
