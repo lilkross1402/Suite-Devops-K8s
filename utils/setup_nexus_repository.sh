@@ -89,7 +89,12 @@ setup_nexus_server() {
     primary_ip=$(net_get_primary_ip)
 
     printf "\n  ${CLR_BOLD_WHITE}Configuración del Servidor Nexus para Entornos Sin Internet:${CLR_RESET}\n"
-    printf "  IP Detectada de este Servidor: ${CLR_BOLD_CYAN}%s${CLR_RESET}\n" "${primary_ip}"
+    printf "  IP Privada Detectada de este Servidor: ${CLR_BOLD_CYAN}%s${CLR_RESET}\n" "${primary_ip}"
+
+    local public_ip
+    printf "  Ingrese la IP Pública / DNS Expuesto (ej. 3.144.166.168 - Presione Enter para usar %s): " "${primary_ip}"
+    read -r public_ip
+    public_ip="${public_ip:-${primary_ip}}"
 
     local nexus_port="8081"
     local docker_port="8082"
@@ -109,7 +114,7 @@ setup_nexus_server() {
             -p "${docker_port}:${docker_port}" \
             -v nexus-data:/nexus-data \
             sonatype/nexus3:latest
-        log_success "Contenedor Nexus 3 iniciado en puertos http://${primary_ip}:${nexus_port} y registro:${docker_port}"
+        log_success "Contenedor Nexus 3 iniciado en http://${public_ip}:${nexus_port} y registro:${docker_port}"
     fi
 
     # 2. Esperar arranque de Nexus
@@ -131,28 +136,55 @@ setup_nexus_server() {
 
     log_success "Nexus 3 listo. Contraseña inicial de admin: ${CLR_BOLD_YELLOW}${admin_pass}${CLR_RESET}"
 
-    # 3. Configurar Insecure Registry en Docker local para Push
-    log_info "Configurando daemon de Docker local para permitir http://${primary_ip}:${docker_port}..."
+    # 3. Configurar Repositorio Docker Hosted y Realms en Nexus vía API REST
+    log_info "Configurando Repositorio Docker Hosted en puerto ${docker_port} vía API REST..."
+    sleep 5
+    sudo curl -s -u "admin:${admin_pass}" -X POST "http://localhost:8081/service/rest/v1/repositories/docker/hosted" \
+         -H "Content-Type: application/json" \
+         -d '{
+           "name": "docker-hosted",
+           "online": true,
+           "storage": {
+             "blobStoreName": "default",
+             "strictContentTypeValidation": true,
+             "writePolicy": "allow"
+           },
+           "cleanup": null,
+           "docker": {
+             "v1Enabled": false,
+             "forceBasicAuth": false,
+             "httpPort": 8082
+           }
+         }' 2>/dev/null || true
+
+    log_info "Activando Docker Bearer Token Realm en Nexus..."
+    sudo curl -s -u "admin:${admin_pass}" -X PUT "http://localhost:8081/service/rest/v1/security/realms/active" \
+         -H "Content-Type: application/json" \
+         -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' 2>/dev/null || true
+
+    # 4. Configurar Insecure Registry en Docker local para Push
+    log_info "Configurando daemon de Docker local para permitir la IP ${public_ip}:${docker_port}..."
     sudo mkdir -p /etc/docker
     local daemon_json="/etc/docker/daemon.json"
-    if [[ ! -f "${daemon_json}" ]]; then
-        echo "{\"insecure-registries\": [\"${primary_ip}:${docker_port}\", \"localhost:${docker_port}\"]}" | sudo tee "${daemon_json}" > /dev/null
-    else
-        if ! grep -q "${docker_port}" "${daemon_json}"; then
-            echo "{\"insecure-registries\": [\"${primary_ip}:${docker_port}\", \"localhost:${docker_port}\"]}" | sudo tee "${daemon_json}" > /dev/null
-        fi
-    fi
+    echo "{\"insecure-registries\": [\"${primary_ip}:${docker_port}\", \"${public_ip}:${docker_port}\", \"localhost:${docker_port}\"]}" | sudo tee "${daemon_json}" > /dev/null
     sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
 
-    # 4. Descargar y Subir (Mirroring) todas las imágenes
-    log_section "Descarga y Mirroring de Imágenes (Online → Nexus)"
+    # Autenticación Docker local
+    log_info "Autenticando cliente Docker contra Nexus..."
+    sudo docker login -u admin -p "${admin_pass}" "localhost:${docker_port}" 2>/dev/null || true
+    if [[ "${public_ip}" != "localhost" ]]; then
+        sudo docker login -u admin -p "${admin_pass}" "${public_ip}:${docker_port}" 2>/dev/null || true
+    fi
+
+    # 5. Descargar y Subir (Mirroring) todas las imágenes
+    log_section "Descarga y Mirroring de Imágenes (Online → Nexus ${public_ip}:${docker_port})"
 
     if ! net_is_online; then
         log_warn "El servidor Nexus no tiene acceso a Internet actualmente."
         log_warn "Asegúrese de ejecutar este script cuando tenga conexión para poblar el repositorio."
     else
         log_info "Descargando e inyectando ${#REQUIRED_IMAGES[@]} imágenes requeridas..."
-        local target_registry="${primary_ip}:${docker_port}"
+        local target_registry="${public_ip}:${docker_port}"
 
         for img in "${REQUIRED_IMAGES[@]}"; do
             log_info "Procesando imagen: ${img}..."
