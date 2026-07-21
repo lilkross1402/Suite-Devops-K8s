@@ -68,7 +68,11 @@ _show_join_commands() {
 
     # Always generate/refresh active token & cert_key directly from kubeadm if master is running
     if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
-        token=$(sudo kubeadm token create 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
+        sudo kubeadm init phase bootstrap-token 2>/dev/null || true
+        token=$(sudo kubeadm token create --print-join-command 2>/dev/null | grep -oP '(?<=--token )\S+' | head -1 || echo "")
+        if [[ -z "${token}" ]]; then
+            token=$(sudo kubeadm token create 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
+        fi
         ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
             openssl rsa -pubin -outform der 2>/dev/null | \
             openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}' || echo "")

@@ -897,8 +897,10 @@ _extract_join_credentials() {
     local cert_key
     cert_key=$(grep -oP '(?<=--certificate-key )\S+' "${init_log}" 2>/dev/null | head -1 || echo "")
 
+    # Ensure cluster-info ConfigMap and RBAC in kube-public are properly configured
+    sudo kubeadm init phase bootstrap-token 2>/dev/null || true
+
     if [[ -z "${token}" ]] || [[ -z "${ca_hash}" ]]; then
-        # Generate a new token if not found
         token=$(sudo kubeadm token create 2>/dev/null | head -1)
         ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
             openssl rsa -pubin -outform der 2>/dev/null | \
