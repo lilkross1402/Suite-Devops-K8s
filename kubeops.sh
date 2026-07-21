@@ -474,6 +474,14 @@ _handle_add_ha_master() {
         return 1
     fi
 
+    log_info "Configurando módulos de kernel (overlay, br_netfilter) y sysctl para Kubernetes..."
+    sudo modprobe overlay 2>/dev/null || true
+    sudo modprobe br_netfilter 2>/dev/null || true
+    sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 2>/dev/null || true
+    sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1 2>/dev/null || true
+    sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+    os_set_sysctl 2>/dev/null || true
+
     log_info "Uniendo esta máquina como Control Plane Secundario a ${control_plane}:6443..."
 
     sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
@@ -483,7 +491,7 @@ _handle_add_ha_master() {
         --discovery-token-ca-cert-hash "sha256:${ca_hash}" \
         --control-plane \
         --certificate-key "${cert_key}" \
-        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257; then
+        --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward; then
 
         log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 

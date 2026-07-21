@@ -274,12 +274,19 @@ nodeRegistration:
   taints: []
 EOF
 
+    log_info "Configurando módulos de kernel (overlay, br_netfilter) y sysctl para Kubernetes..."
+    sudo modprobe overlay 2>/dev/null || true
+    sudo modprobe br_netfilter 2>/dev/null || true
+    sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 2>/dev/null || true
+    sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1 2>/dev/null || true
+    sudo sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+
     log_info "Executing kubeadm join..."
     if ! sudo kubeadm join \
         --config "${join_config}" \
+        --ignore-preflight-errors=FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward,Port-10250 \
         --v=5 \
-        2>&1 | tee "${join_log}" | \
-        while IFS= read -r line; do log_debug "${line}"; done; then
+        2>&1 | tee "${join_log}"; then
 
         log_error "kubeadm join FAILED — reviewing log..."
         printf "\n  ${CLR_BOLD_RED}Last 20 lines of join log:${CLR_RESET}\n"
