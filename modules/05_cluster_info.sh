@@ -69,6 +69,11 @@ _show_join_commands() {
     # Always generate/refresh active token & cert_key directly from kubeadm if master is running
     if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
         sudo kubeadm init phase bootstrap-token 2>/dev/null || true
+        sudo kubectl create rolebinding kubeadm:bootstrap-signer-cluster-info \
+            --clusterrole=system:public-info-viewer \
+            --group=system:anonymous \
+            -n kube-public --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
+
         token=$(sudo kubeadm token create --print-join-command 2>/dev/null | grep -oP '(?<=--token )\S+' | head -1 || echo "")
         if [[ -z "${token}" ]]; then
             token=$(sudo kubeadm token create 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
