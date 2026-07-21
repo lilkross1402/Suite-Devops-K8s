@@ -509,7 +509,11 @@ _handle_add_ha_master() {
 
         log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 
-        # Configure kubeconfig
+        # Configure kubeconfig to target this master's local IP for resilient HA CLI access
+        local local_ip
+        local_ip=$(net_get_primary_ip)
+        sudo kubectl config set-cluster kubernetes --server="https://${local_ip}:6443" --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
+
         sudo mkdir -p /root/.kube
         sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
         sudo chmod 600 /root/.kube/config 2>/dev/null || true
