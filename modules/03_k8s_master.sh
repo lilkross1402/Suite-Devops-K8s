@@ -812,6 +812,9 @@ networking:
   serviceSubnet: "${SERVICE_CIDR}"
   dnsDomain: "${K8S_DNS_DOMAIN}"
 apiServer:
+  certSANs:
+    - "127.0.0.1"
+    - "${master_ip}"
   extraArgs:
     authorization-mode: Node,RBAC
     enable-admission-plugins: NodeRestriction,PodSecurity
