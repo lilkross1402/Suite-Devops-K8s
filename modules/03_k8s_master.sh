@@ -102,9 +102,212 @@ _master_preflight() {
 }
 
 # ---------------------------------------------------------------------------
+# Containerd Configuration & Helpers
 # ---------------------------------------------------------------------------
-# Containerd Installation (Zero-Fail Implementation)
-# ---------------------------------------------------------------------------
+
+_configure_containerd_mirror() {
+    local registry_url="${1}"
+    local mirror_dir="${CONTAINERD_CONFIG_DIR}/certs.d/${registry_url}"
+    sudo mkdir -p "${mirror_dir}"
+    sudo tee "${mirror_dir}/hosts.toml" > /dev/null <<EOF
+server = "http://${registry_url}"
+
+[host."http://${registry_url}"]
+  capabilities = ["pull", "resolve", "push"]
+  skip_verify = true
+EOF
+
+    # Also add mirror for common registries in air-gap
+    for base_registry in "docker.io" "registry.k8s.io" "quay.io" "gcr.io"; do
+        local base_mirror_dir="${CONTAINERD_CONFIG_DIR}/certs.d/${base_registry}"
+        sudo mkdir -p "${base_mirror_dir}"
+        sudo tee "${base_mirror_dir}/hosts.toml" > /dev/null <<EOF
+server = "https://${base_registry}"
+
+[host."http://${registry_url}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+    done
+    log_success "Containerd mirrors configured for air-gap registry"
+}
+
+_inject_nexus_mirrors_if_configured() {
+    # Load from state if not in environment
+    if [[ -z "${NEXUS_REGISTRY:-}" ]]; then
+        local nexus_from_state
+        nexus_from_state=$(state_get ".nexus.registry" 2>/dev/null || echo "")
+        if [[ -z "${nexus_from_state}" || "${nexus_from_state}" == "null" ]]; then
+            log_debug "NEXUS_REGISTRY not set — skipping Nexus mirror injection"
+            return 0
+        fi
+        export NEXUS_REGISTRY="${nexus_from_state}"
+    fi
+
+    log_info "Injecting Nexus mirrors for ${CLR_BOLD_CYAN}${NEXUS_REGISTRY}${CLR_RESET} → containerd"
+
+    local certs_dir="${CONTAINERD_CONFIG_DIR}/certs.d"
+    sudo mkdir -p "${certs_dir}"
+
+    local -a registries=(
+        "docker.io|https://registry-1.docker.io"
+        "registry.k8s.io|https://registry.k8s.io"
+        "quay.io|https://quay.io"
+        "ghcr.io|https://ghcr.io"
+        "gcr.io|https://gcr.io"
+        "k8s.gcr.io|https://k8s.gcr.io"
+    )
+
+    for entry in "${registries[@]}"; do
+        local reg="${entry%%|*}"
+        local fallback="${entry##*|}"
+        local mirror_dir="${certs_dir}/${reg}"
+
+        sudo mkdir -p "${mirror_dir}"
+        sudo tee "${mirror_dir}/hosts.toml" > /dev/null <<EOF
+# KubeOps-Suite — Auto-generated Nexus mirror for ${reg}
+server = "${fallback}"
+
+[host."http://${NEXUS_REGISTRY}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify   = true
+
+[host."${fallback}"]
+  capabilities = ["pull", "resolve"]
+EOF
+        log_debug "Mirror set: ${reg} → http://${NEXUS_REGISTRY} (fallback: ${fallback})"
+    done
+
+    local config_toml="${CONTAINERD_CONFIG_DIR}/config.toml"
+    if [[ -f "${config_toml}" ]]; then
+        sudo sed -i '/# KubeOps-Nexus-mirrors-start/,/# KubeOps-Nexus-mirrors-end/d' \
+            "${config_toml}" 2>/dev/null || true
+
+        sudo tee -a "${config_toml}" > /dev/null <<EOF
+
+# KubeOps-Nexus-mirrors-start  (auto-generated — do not edit manually)
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "${certs_dir}"
+
+  [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+      endpoint = ["http://${NEXUS_REGISTRY}", "https://registry-1.docker.io"]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."registry.k8s.io"]
+      endpoint = ["http://${NEXUS_REGISTRY}", "https://registry.k8s.io"]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."quay.io"]
+      endpoint = ["http://${NEXUS_REGISTRY}", "https://quay.io"]
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."ghcr.io"]
+      endpoint = ["http://${NEXUS_REGISTRY}", "https://ghcr.io"]
+
+  [plugins."io.containerd.grpc.v1.cri".registry.configs."${NEXUS_REGISTRY}".tls]
+    insecure_skip_verify = true
+# KubeOps-Nexus-mirrors-end
+EOF
+    fi
+
+    log_success "Nexus mirrors injected — restarting containerd"
+    sudo systemctl restart containerd 2>/dev/null || \
+        sudo service containerd restart 2>/dev/null || true
+}
+
+_configure_containerd() {
+    log_info "Configuring containerd..."
+
+    sudo mkdir -p "${CONTAINERD_CONFIG_DIR}"
+
+    # Generate default config
+    if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]] || [[ -x /usr/local/bin/containerd ]]; then
+        local c_bin="containerd"
+        [[ -x /usr/bin/containerd ]] && c_bin="/usr/bin/containerd"
+        [[ -x /usr/local/bin/containerd ]] && c_bin="/usr/local/bin/containerd"
+
+        ${c_bin} config default | sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null
+    else
+        log_warn "containerd binary not found in PATH — writing minimal config"
+        sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null <<'EOF'
+version = 2
+
+[plugins."io.containerd.grpc.v1.cri"]
+  [plugins."io.containerd.grpc.v1.cri".containerd]
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+          SystemdCgroup = true
+EOF
+    fi
+
+    # Enable SystemdCgroup (required for Kubernetes)
+    sudo sed -i \
+        's/SystemdCgroup = false/SystemdCgroup = true/' \
+        "${CONTAINERD_CONFIG_DIR}/config.toml"
+
+    # If AIR-GAP: configure mirror to local registry
+    if net_is_airgap; then
+        local registry_url
+        registry_url=$(state_get ".registry.url" 2>/dev/null || echo "")
+        if [[ -n "${registry_url}" && "${registry_url}" != "null" ]]; then
+            log_info "Configuring containerd mirror → ${registry_url}"
+            _configure_containerd_mirror "${registry_url}"
+        fi
+    fi
+
+    # Hook: inject Nexus mirrors if NEXUS_REGISTRY is set (additive, idempotent)
+    _inject_nexus_mirrors_if_configured
+
+    # Enable and start containerd
+    sudo systemctl daemon-reload
+    sudo systemctl enable containerd 2>/dev/null || true
+    sudo systemctl restart containerd 2>/dev/null || true
+}
+
+_install_containerd_online() {
+    log_step 1 6 "Installing containerd (ONLINE mode)"
+    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+
+    _ensure_containerd_binaries
+    _ensure_containerd_systemd_service
+    _configure_containerd
+    log_success "containerd instalado y configurado correctamente (online)"
+}
+
+_install_containerd_airgap() {
+    log_step 1 6 "Installing containerd (AIR-GAP mode)"
+
+    local containerd_tar
+    containerd_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "containerd*.tar.gz" 2>/dev/null | head -1 || echo "")
+
+    if [[ -z "${containerd_tar}" ]]; then
+        log_fatal "No containerd tarball found in ${OFFLINE_ASSETS_DIR}/. \
+Expected: containerd-<version>-linux-amd64.tar.gz"
+    fi
+
+    log_info "Installing containerd from: ${containerd_tar}"
+    sudo tar -C /usr/local -xzf "${containerd_tar}"
+
+    _ensure_containerd_systemd_service
+
+    local runc_bin
+    runc_bin=$(find "${OFFLINE_ASSETS_DIR}" -name "runc.amd64" -o -name "runc" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${runc_bin}" ]]; then
+        sudo install -m 755 "${runc_bin}" /usr/local/sbin/runc
+        sudo install -m 755 "${runc_bin}" /usr/bin/runc 2>/dev/null || true
+        log_success "runc installed"
+    else
+        log_warn "runc binary not found in offline-assets — containerd may not start"
+    fi
+
+    local cni_tar
+    cni_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "cni-plugins*.tar.gz" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${cni_tar}" ]]; then
+        sudo mkdir -p /opt/cni/bin
+        sudo tar -C /opt/cni/bin -xzf "${cni_tar}"
+        log_success "CNI plugins installed from tarball"
+    fi
+
+    _configure_containerd
+    log_success "containerd installed (air-gap)"
+}
 
 _wait_for_apt_lock() {
     local count=0
@@ -241,139 +444,6 @@ WantedBy=multi-user.target
 EOF
         sudo systemctl daemon-reload
     fi
-_configure_containerd() {
-    log_info "Configuring containerd..."
-
-    sudo mkdir -p "${CONTAINERD_CONFIG_DIR}"
-
-    # Generate default config
-    if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]] || [[ -x /usr/local/bin/containerd ]]; then
-        local c_bin="containerd"
-        [[ -x /usr/bin/containerd ]] && c_bin="/usr/bin/containerd"
-        [[ -x /usr/local/bin/containerd ]] && c_bin="/usr/local/bin/containerd"
-
-        ${c_bin} config default | sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null
-    else
-        log_warn "containerd binary not found in PATH — writing minimal config"
-        sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null <<'EOF'
-version = 2
-
-[plugins."io.containerd.grpc.v1.cri"]
-  [plugins."io.containerd.grpc.v1.cri".containerd]
-    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
-      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-        runtime_type = "io.containerd.runc.v2"
-        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-          SystemdCgroup = true
-EOF
-    fi
-
-    # Enable SystemdCgroup (required for Kubernetes)
-    sudo sed -i \
-        's/SystemdCgroup = false/SystemdCgroup = true/' \
-        "${CONTAINERD_CONFIG_DIR}/config.toml"
-
-    # If AIR-GAP: configure mirror to local registry
-    if net_is_airgap; then
-        local registry_url
-        registry_url=$(state_get ".registry.url" 2>/dev/null || echo "")
-        if [[ -n "${registry_url}" && "${registry_url}" != "null" ]]; then
-            log_info "Configuring containerd mirror → ${registry_url}"
-            _configure_containerd_mirror "${registry_url}"
-        fi
-    fi
-
-    # Hook: inject Nexus mirrors if NEXUS_REGISTRY is set (additive, idempotent)
-    _inject_nexus_mirrors_if_configured
-
-    # Enable and start containerd
-    sudo systemctl daemon-reload
-    sudo systemctl enable containerd 2>/dev/null || true
-    sudo systemctl restart containerd 2>/dev/null || true
-}
-
-_install_containerd_online() {
-    log_step 1 6 "Installing containerd (ONLINE mode)"
-    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
-
-    _ensure_containerd_binaries
-    _ensure_containerd_systemd_service
-    _configure_containerd
-    log_success "containerd instalado y configurado correctamente (online)"
-}
-
-_install_containerd_airgap() {
-    log_step 1 6 "Installing containerd (AIR-GAP mode)"
-
-    # Look for containerd tarball in offline-assets
-    local containerd_tar
-    containerd_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "containerd*.tar.gz" 2>/dev/null | head -1 || echo "")
-
-    if [[ -z "${containerd_tar}" ]]; then
-        log_fatal "No containerd tarball found in ${OFFLINE_ASSETS_DIR}/. \
-Expected: containerd-<version>-linux-amd64.tar.gz"
-    fi
-
-    log_info "Installing containerd from: ${containerd_tar}"
-    sudo tar -C /usr/local -xzf "${containerd_tar}"
-
-    _ensure_containerd_systemd_service
-
-    # Install runc
-    local runc_bin
-    runc_bin=$(find "${OFFLINE_ASSETS_DIR}" -name "runc.amd64" -o -name "runc" 2>/dev/null | head -1 || echo "")
-    if [[ -n "${runc_bin}" ]]; then
-        sudo install -m 755 "${runc_bin}" /usr/local/sbin/runc
-        sudo install -m 755 "${runc_bin}" /usr/bin/runc 2>/dev/null || true
-        log_success "runc installed"
-    else
-        log_warn "runc binary not found in offline-assets — containerd may not start"
-    fi
-
-    # Install CNI plugins
-    local cni_tar
-    cni_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "cni-plugins*.tar.gz" 2>/dev/null | head -1 || echo "")
-    if [[ -n "${cni_tar}" ]]; then
-        sudo mkdir -p /opt/cni/bin
-        sudo tar -C /opt/cni/bin -xzf "${cni_tar}"
-        log_success "CNI plugins installed from tarball"
-    fi
-
-    _configure_containerd
-    log_success "containerd installed (air-gap)"
-}
-    local service_file="/etc/systemd/system/containerd.service"
-    if [[ ! -f "${service_file}" && ! -f "/lib/systemd/system/containerd.service" ]]; then
-        log_info "Creating systemd service file for containerd: ${service_file}"
-        sudo tee "${service_file}" > /dev/null <<'EOF'
-[Unit]
-Description=containerd container runtime
-Documentation=https://containerd.io
-After=network.target local-fs.target
-
-[Service]
-ExecStartPre=-/sbin/modprobe overlay
-ExecStart=/usr/bin/containerd
-Type=notify
-Delegate=yes
-KillMode=process
-Restart=always
-RestartSec=5
-LimitNPROC=infinity
-LimitCORE=infinity
-LimitNOFILE=infinity
-TasksMax=infinity
-OOMScoreAdjust=-999
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        sudo systemctl daemon-reload
-    fi
-}
-
-    # Enable and start containerd
-    _ensure_containerd_systemd_service
     sudo systemctl daemon-reload
     sudo systemctl enable containerd
     sudo systemctl restart containerd
