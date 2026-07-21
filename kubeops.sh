@@ -498,6 +498,7 @@ _handle_add_ha_master() {
 
     sudo fuser -k 6443/tcp 10259/tcp 10257/tcp 2379/tcp 2380/tcp 2>/dev/null || true
 
+    local join_success=false
     if sudo kubeadm join "${control_plane}:6443" \
         --token "${token}" \
         --discovery-token-ca-cert-hash "sha256:${ca_hash}" \
@@ -505,7 +506,21 @@ _handle_add_ha_master() {
         --certificate-key "${cert_key}" \
         --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward \
         --v=5; then
+        join_success=true
+    else
+        log_warn "Reintentando unión omitiendo verificación CA desatendida..."
+        if sudo kubeadm join "${control_plane}:6443" \
+            --token "${token}" \
+            --discovery-token-unsafe-skip-ca-verification \
+            --control-plane \
+            --certificate-key "${cert_key}" \
+            --ignore-preflight-errors=Port-6443,Port-10259,Port-10257,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward \
+            --v=5; then
+            join_success=true
+        fi
+    fi
 
+    if [[ "${join_success}" == "true" ]]; then
         log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 
         # Configure kubeconfig

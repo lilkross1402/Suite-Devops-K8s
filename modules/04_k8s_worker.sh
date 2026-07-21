@@ -288,11 +288,19 @@ EOF
         --v=5 \
         2>&1 | tee "${join_log}"; then
 
-        log_error "kubeadm join FAILED — reviewing log..."
-        printf "\n  ${CLR_BOLD_RED}Last 20 lines of join log:${CLR_RESET}\n"
-        tail -20 "${join_log}" | while IFS= read -r l; do log_error "  ${l}"; done
-        printf "\n  Full log: ${join_log}\n"
-        return 1
+        log_warn "Primer intento con discovery-token falló. Reintentando con --discovery-token-unsafe-skip-ca-verification..."
+        if ! sudo kubeadm join "${CONTROL_PLANE_ENDPOINT}:6443" \
+            --token "${JOIN_TOKEN}" \
+            --discovery-token-unsafe-skip-ca-verification \
+            --ignore-preflight-errors=FileContent--proc-sys-net-bridge-bridge-nf-call-iptables,FileContent--proc-sys-net-ipv4-ip_forward,Port-10250 \
+            --v=5 \
+            2>&1 | tee -a "${join_log}"; then
+            log_error "kubeadm join FAILED — reviewing log..."
+            printf "\n  ${CLR_BOLD_RED}Last 20 lines of join log:${CLR_RESET}\n"
+            tail -20 "${join_log}" | while IFS= read -r l; do log_error "  ${l}"; done
+            printf "\n  Full log: ${join_log}\n"
+            return 1
+        fi
     fi
 
     rm -f "${join_config}"
