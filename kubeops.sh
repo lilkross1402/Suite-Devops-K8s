@@ -514,6 +514,14 @@ _handle_add_ha_master() {
         local_ip=$(net_get_primary_ip)
 
         log_info "Configurando resiliencia HA automática en servicios locales de este Máster..."
+        if [[ -f /etc/kubernetes/manifests/kube-apiserver.yaml ]]; then
+            if ! grep -q "anonymous-auth=true" /etc/kubernetes/manifests/kube-apiserver.yaml; then
+                sudo sed -i '/anonymous-auth/d' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
+                sudo sed -i '/- --authorization-mode=Node,RBAC/a \    - --anonymous-auth=true' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
+                sudo pkill -9 kube-apiserver 2>/dev/null || true
+            fi
+        fi
+
         sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
         sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/controller-manager.conf 2>/dev/null || true
         sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/scheduler.conf 2>/dev/null || true
