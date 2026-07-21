@@ -286,23 +286,23 @@ BANNER
 
     # Title bar
     printf "  ${CLR_BOLD_WHITE}Suite v%-8s${CLR_RESET}" "${KUBEOPS_VERSION}"
-    printf "${CLR_DIM}Kubernetes Provisioning & Management — Online / Air-Gapped${CLR_RESET}\n"
-    printf "  ${CLR_DIM}%s${CLR_RESET}\n" "$(date '+%A, %d %B %Y  %H:%M:%S')"
+    printf "${CLR_DIM}Aprovisionamiento y Gestión de Kubernetes — Online / Air-Gapped${CLR_RESET}\n"
+    printf "  ${CLR_DIM}%s${CLR_RESET}\n" "$(date '+%A, %d de %B de %Y  %H:%M:%S')"
 
     # System context bar
     printf "\n"
     local mode_color="${CLR_BOLD_GREEN}"
-    local mode_label="● ONLINE"
+    local mode_label="● EN LÍNEA"
     if net_is_airgap 2>/dev/null; then
         mode_color="${CLR_BOLD_YELLOW}"
         mode_label="● AIR-GAPPED"
     fi
 
-    local cluster_init="${CLR_BOLD_RED}NOT INITIALIZED"
+    local cluster_init="${CLR_BOLD_RED}NO INICIALIZADO"
     if state_is_cluster_initialized 2>/dev/null; then
         local master_ip
-        master_ip=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "unknown")
-        cluster_init="${CLR_BOLD_GREEN}INITIALIZED  ${CLR_DIM}(${master_ip})${CLR_RESET}"
+        master_ip=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "desconocido")
+        cluster_init="${CLR_BOLD_GREEN}INICIALIZADO  ${CLR_DIM}(${master_ip})${CLR_RESET}"
     fi
 
     # Disable pipefail locally so kubectl failure just returns 0, not N/A
@@ -310,12 +310,12 @@ BANNER
     node_count=$(set +o pipefail; kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') || node_count="N/A"
     [[ "${node_count}" == "0" && ! $(kubectl version --short 2>/dev/null) ]] && node_count="N/A"
 
-    printf "  %-20s ${mode_color}%-16s${CLR_RESET}" "Network:" "${mode_label}"
-    printf "  %-18s %b\n" "Cluster:" "${cluster_init}${CLR_RESET}"
-    printf "  %-20s %-16s" "Host:" "$(hostname 2>/dev/null | cut -c1-16)"
-    printf "  %-18s %s\n" "Nodes:" "${node_count}"
-    printf "  %-20s %-16s" "IP:" "$(net_get_primary_ip 2>/dev/null | cut -c1-16)"
-    printf "  %-18s ${CLR_DIM}%s${CLR_RESET}\n" "State file:" "~/.kubeops/cluster-state.json"
+    printf "  %-20s ${mode_color}%-16s${CLR_RESET}" "Red:" "${mode_label}"
+    printf "  %-18s %b\n" "Clúster:" "${cluster_init}${CLR_RESET}"
+    printf "  %-20s %-16s" "Servidor:" "$(hostname 2>/dev/null | cut -c1-16)"
+    printf "  %-18s %s\n" "Nodos:" "${node_count}"
+    printf "  %-20s %-16s" "IP Principal:" "$(net_get_primary_ip 2>/dev/null | cut -c1-16)"
+    printf "  %-18s ${CLR_DIM}%s${CLR_RESET}\n" "Archivo de Estado:" "~/.kubeops/cluster-state.json"
 }
 
 _print_menu_separator() {
@@ -350,67 +350,67 @@ _print_menu() {
     _print_menu_separator
 
     # Infrastructure section
-    _print_menu_section "  🏗  INFRASTRUCTURE PROVISIONING"
+    _print_menu_section "  🏗  APROVISIONAMIENTO DE INFRAESTRUCTURA"
 
-    _print_menu_item "1" "🏭" "Local Image Registry" \
-        "Deploy Docker Registry v2 (Air-Gap)"
+    _print_menu_item "1" "🏭" "Registro Local de Imágenes" \
+        "Desplegar Docker Registry v2 (Air-Gap)"
 
-    _print_menu_item "2" "⚙️ " "Install Container Runtime" \
-        "Install & configure containerd"
+    _print_menu_item "2" "⚙️ " "Instalar Runtime (containerd)" \
+        "Instalar y configurar containerd + mirrors"
 
-    _print_menu_item "3" "🎯" "Initialize Master Node" \
-        "kubeadm init — first control plane"
+    _print_menu_item "3" "🎯" "Inicializar Nodo Máster" \
+        "kubeadm init + Cilium CNI (Control Plane)"
 
-    _print_menu_item "4" "🔀" "Add Master Node (HA)" \
-        "Join additional control plane (HA)"
+    _print_menu_item "4" "🔀" "Agregar Nodo Máster (HA)" \
+        "Unir Control Plane secundario (Alta Disponibilidad)"
 
-    _print_menu_item "5" "💼" "Add Worker Node" \
-        "Join worker using saved token"
+    _print_menu_item "5" "💼" "Agregar Nodo Worker" \
+        "Unir nodo trabajador al clúster"
 
     _print_menu_separator
 
     # Observability section
-    _print_menu_section "  📊  CLUSTER OPERATIONS"
+    _print_menu_section "  📊  OPERACIONES DEL CLÚSTER"
 
-    _print_menu_item "6" "🔍" "Cluster Status & Join Cmds" \
-        "View nodes, pods, tokens"
+    _print_menu_item "6" "🔍" "Estado del Clúster y Tokens" \
+        "Ver nodos, pods y comandos de unión"
 
     _print_menu_separator
 
     # Stack section
-    _print_menu_section "  🚀  ECOSYSTEM STACK DEPLOYMENT"
+    _print_menu_section "  🚀  DESPLIEGUE DEL STACK DE ECOSISTEMA"
 
-    _print_menu_item "7" "📈" "Observability Stack" \
+    _print_menu_item "7" "📈" "Stack de Observabilidad" \
         "Prometheus + Grafana + Alertmanager"
 
     _print_menu_item "8" "🦍" "API Gateway (Kong)" \
         "Kong Gateway + Ingress Controller"
 
-    _print_menu_item "9" "🔴" "Redis Cache" \
-        "Redis standalone/cluster via Helm"
+    _print_menu_item "9" "🔴" "Caché Redis" \
+        "Redis Standalone / Clúster vía Helm"
 
     _print_menu_separator
 
     # Utilities section
-    _print_menu_section "  🔧  UTILITIES"
+    _print_menu_section "  🔧  UTILIDADES"
 
-    _print_menu_item "S" "💾" "Show Cluster State" \
-        "Display full state JSON summary"
+    _print_menu_item "S" "💾" "Ver Estado del Clúster" \
+        "Mostrar resumen JSON de estado"
 
-    _print_menu_item "B" "🗂 " "Backup State" \
-        "Create timestamped state backup"
+    _print_menu_item "B" "🗂 " "Respaldo de Estado" \
+        "Crear backup del archivo de estado"
 
-    _print_menu_item "L" "📋" "View Logs" \
-        "Tail KubeOps log file"
+    _print_menu_item "L" "📋" "Ver Registros (Logs)" \
+        "Ver logs en tiempo real"
 
-    _print_menu_item "R" "🔄" "Reset State" \
-        "Clear stored cluster data"
+    _print_menu_item "R" "🔄" "Reiniciar Estado" \
+        "Borrar estado guardado del clúster"
 
-    _print_menu_item "Q" "🚪" "Quit" \
-        "Exit KubeOps-Suite"
+    _print_menu_item "Q" "🚪" "Salir" \
+        "Salir de KubeOps-Suite"
 
     _print_menu_separator
-    printf "\n  ${CLR_BOLD_WHITE}Select option${CLR_RESET} › "
+    printf "\n  ${CLR_BOLD_WHITE}Seleccione una opción${CLR_RESET} › "
 }
 
 # ---------------------------------------------------------------------------

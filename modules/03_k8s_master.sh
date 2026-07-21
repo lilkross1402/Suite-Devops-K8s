@@ -885,30 +885,27 @@ _run_kubeadm_init() {
 _extract_join_credentials() {
     local init_log="${1}"
 
-    log_info "Extracting join credentials from init output..."
+    log_debug "Extracting join credentials from init output..." >&2
 
     # Extract token (format: xxxxxx.xxxxxxxxxxxxxxxx)
     local token
-    token=$(grep -oP '(?<=--token )\S+' "${init_log}" | head -1 || echo "")
+    token=$(grep -oP '(?<=--token )\S+' "${init_log}" 2>/dev/null | head -1 || echo "")
 
     # Extract CA cert hash (sha256:...)
     local ca_hash
-    ca_hash=$(grep -oP '(?<=--discovery-token-ca-cert-hash sha256:)\S+' "${init_log}" | head -1 || echo "")
+    ca_hash=$(grep -oP '(?<=--discovery-token-ca-cert-hash sha256:)\S+' "${init_log}" 2>/dev/null | head -1 || echo "")
 
     # Extract certificate key (for HA master join)
     local cert_key
-    cert_key=$(grep -oP '(?<=--certificate-key )\S+' "${init_log}" | head -1 || echo "")
+    cert_key=$(grep -oP '(?<=--certificate-key )\S+' "${init_log}" 2>/dev/null | head -1 || echo "")
 
     if [[ -z "${token}" ]] || [[ -z "${ca_hash}" ]]; then
-        log_warn "Could not extract join credentials from init log — regenerating..."
-        # Generate a new token
+        # Generate a new token if not found
         token=$(sudo kubeadm token create 2>/dev/null | head -1)
-        # Get CA hash
         ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
             openssl rsa -pubin -outform der 2>/dev/null | \
             openssl dgst -sha256 -hex 2>/dev/null | \
             awk '{print $2}')
-        # Get cert key
         cert_key=$(sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | \
             tail -1 | tr -d '[:space:]' || echo "")
     fi
@@ -1006,31 +1003,29 @@ _deploy_cni_airgap() {
 # ---------------------------------------------------------------------------
 
 _setup_kubeconfig() {
-    log_info "Configuring kubeconfig..."
+    log_info "Configurando kubeconfig automáticamente para root y usuario activo..."
 
-    # Set up root kubeconfig
-    export KUBECONFIG="${KUBECONFIG_PATH}"
+    # 1. Configurar para root (/root/.kube/config)
+    sudo mkdir -p /root/.kube
+    sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config
+    sudo chmod 600 /root/.kube/config
 
-    # Set up current user kubeconfig with secure permissions
-    local user_kube_dir="${HOME}/.kube"
-    mkdir -p "${user_kube_dir}"
-    chmod 700 "${user_kube_dir}"
-
-    if [[ "${EUID}" -eq 0 ]]; then
-        cp -f "${KUBECONFIG_PATH}" "${KUBECONFIG_LOCAL}"
-        chmod 600 "${KUBECONFIG_LOCAL}"
-    else
-        sudo cp -f "${KUBECONFIG_PATH}" "${KUBECONFIG_LOCAL}"
-        sudo chown "${USER}:${USER}" "${KUBECONFIG_LOCAL}"
-        chmod 600 "${KUBECONFIG_LOCAL}"
+    # 2. Configurar para SUDO_USER (ej. ubuntu) si aplica
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        local user_home
+        user_home=$(eval echo "~${SUDO_USER}")
+        if [[ -d "${user_home}" ]]; then
+            sudo mkdir -p "${user_home}/.kube"
+            sudo cp -f /etc/kubernetes/admin.conf "${user_home}/.kube/config"
+            sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${user_home}/.kube"
+            sudo chmod 600 "${user_home}/.kube/config"
+            log_success "kubeconfig configurado para usuario: ${SUDO_USER} (${user_home}/.kube/config)"
+        fi
     fi
 
-    # Security hardening: restrict kubeconfig permissions
-    sudo chmod 600 "${KUBECONFIG_PATH}"
-    sudo chmod 600 /etc/kubernetes/pki/*.key 2>/dev/null || true
-
-    export KUBECONFIG="${KUBECONFIG_LOCAL}"
-    log_success "kubeconfig configured: ${KUBECONFIG_LOCAL} (permissions: 600)"
+    # 3. Exportar KUBECONFIG
+    export KUBECONFIG="/root/.kube/config"
+    log_success "kubeconfig activado correctamente sin requerir pasos manuales."
 }
 
 _wait_for_control_plane() {
