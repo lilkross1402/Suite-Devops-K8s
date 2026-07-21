@@ -162,6 +162,21 @@ EOF
         sudo pkill -9 kube-apiserver 2>/dev/null || true
     fi
 
+    log_info "Actualizando kubeconfig local para apuntar a la Virtual IP https://${vip_ip}:8443..."
+    sudo sed -i "s|https://.*:6443|https://${vip_ip}:8443|g" /etc/kubernetes/admin.conf 2>/dev/null || true
+    sudo sed -i "s|https://.*:8443|https://${vip_ip}:8443|g" /etc/kubernetes/admin.conf 2>/dev/null || true
+
+    sudo mkdir -p /root/.kube
+    sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
+
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        local u_home
+        u_home=$(eval echo "~${SUDO_USER}")
+        sudo mkdir -p "${u_home}/.kube"
+        sudo cp -f /etc/kubernetes/admin.conf "${u_home}/.kube/config" 2>/dev/null || true
+        sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${u_home}/.kube" 2>/dev/null || true
+    fi
+
     state_set ".ha.vip" "${vip_ip}"
     log_success "¡HAProxy + Keepalived desplegado exitosamente con VIP flotante ${vip_ip}:8443!"
 }
