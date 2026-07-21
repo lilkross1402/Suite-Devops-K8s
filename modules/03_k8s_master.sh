@@ -25,12 +25,12 @@ source "${SUITE_ROOT}/lib/state_manager.sh"
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment)
 # ---------------------------------------------------------------------------
-readonly K8S_VERSION="${K8S_VERSION:-1.29}"
-readonly K8S_VERSION_FULL="${K8S_VERSION_FULL:-1.29.3}"
-readonly POD_CIDR="${POD_CIDR:-10.244.0.0/16}"
-readonly SERVICE_CIDR="${SERVICE_CIDR:-10.96.0.0/12}"
-readonly K8S_DNS_DOMAIN="${K8S_DNS_DOMAIN:-cluster.local}"
-readonly CNI_PLUGIN="${CNI_PLUGIN:-cilium}"             # cilium | calico | flannel
+K8S_VERSION="${K8S_VERSION:-1.29}"
+K8S_VERSION_FULL="${K8S_VERSION_FULL:-1.29.15}"
+POD_CIDR="${POD_CIDR:-10.244.0.0/16}"
+SERVICE_CIDR="${SERVICE_CIDR:-10.96.0.0/12}"
+K8S_DNS_DOMAIN="${K8S_DNS_DOMAIN:-cluster.local}"
+CNI_PLUGIN="${CNI_PLUGIN:-cilium}"             # cilium | calico | flannel
 
 readonly OFFLINE_ASSETS_DIR="${SUITE_ROOT}/offline-assets"
 readonly CONTAINERD_CONFIG_DIR="/etc/containerd"
@@ -39,9 +39,9 @@ readonly KUBECONFIG_PATH="/etc/kubernetes/admin.conf"
 readonly KUBECONFIG_LOCAL="${HOME}/.kube/config"
 
 # Kubernetes repository URLs
-readonly K8S_APT_KEYRING="/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
-readonly K8S_APT_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/"
-readonly K8S_RPM_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/rpm/"
+K8S_APT_KEYRING="/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+K8S_APT_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/"
+K8S_RPM_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/rpm/"
 
 # ---------------------------------------------------------------------------
 # Preflight validation
@@ -918,50 +918,65 @@ _extract_join_credentials() {
 # ---------------------------------------------------------------------------
 
 _deploy_cni_online() {
-    log_step 5 6 "Deploying CNI plugin: ${CNI_PLUGIN} (ONLINE)"
+    log_step 5 6 "Desplegando Plugin CNI de Red: ${CNI_PLUGIN} (ONLINE)"
 
     case "${CNI_PLUGIN}" in
         cilium)
+            log_info "Iniciando instalación de Cilium CNI..."
             if command -v helm &>/dev/null; then
-                log_info "Deploying Cilium CNI via Helm..."
+                log_info "Desplegando Cilium CNI vía Helm..."
                 helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
                 helm repo update cilium 2>/dev/null || true
-                helm install cilium cilium/cilium --version 1.15.1 \
+                helm install cilium cilium/cilium --version 1.15.5 \
                     --namespace kube-system \
                     --set nodeinit.enabled=true \
                     --set ipam.mode=kubernetes \
-                    --kubeconfig="${KUBECONFIG_LOCAL}"
+                    --kubeconfig="${KUBECONFIG_LOCAL}" || true
             else
-                log_info "Downloading Cilium CNI v1.15.1 manifest..."
-                local cilium_url="https://raw.githubusercontent.com/cilium/cilium/v1.15.1/install/kubernetes/quick-install.yaml"
-                local tmp_cilium="/tmp/cilium-quick-install.yaml"
+                if ! command -v cilium &>/dev/null; then
+                    log_info "Instalando Cilium CLI..."
+                    local CILIUM_CLI_VERSION="v0.16.0"
+                    curl -L --fail -o /tmp/cilium-linux-amd64.tar.gz "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-amd64.tar.gz" 2>/dev/null || true
+                    if [[ -f /tmp/cilium-linux-amd64.tar.gz ]]; then
+                        sudo tar xzvfC /tmp/cilium-linux-amd64.tar.gz /usr/local/bin 2>/dev/null || true
+                        rm -f /tmp/cilium-linux-amd64.tar.gz
+                    fi
+                fi
 
-                if curl -fsSL "${cilium_url}" -o "${tmp_cilium}"; then
-                    log_info "Applying Cilium CNI manifest to cluster..."
-                    kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_LOCAL}"
-                    rm -f "${tmp_cilium}"
+                if command -v cilium &>/dev/null; then
+                    log_info "Ejecutando cilium install..."
+                    cilium install --kubeconfig="${KUBECONFIG_LOCAL}" || true
                 else
-                    log_warn "Cilium download failed — falling back to Calico CNI"
-                    kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
+                    log_info "Aplicando manifiesto oficial de Cilium v1.15..."
+                    local cilium_url="https://raw.githubusercontent.com/cilium/cilium/v1.15/install/kubernetes/quick-install.yaml"
+                    local tmp_cilium="/tmp/cilium-quick-install.yaml"
+                    curl -fsSL "${cilium_url}" -o "${tmp_cilium}" 2>/dev/null || true
+                    if [[ -f "${tmp_cilium}" ]]; then
+                        kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_LOCAL}"
+                        rm -f "${tmp_cilium}"
+                    else
+                        kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
+                    fi
                 fi
             fi
             ;;
         calico)
+            log_info "Desplegando Calico CNI v3.27.0..."
             local calico_url="https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml"
             kubectl apply -f "${calico_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
             ;;
         flannel)
+            log_info "Desplegando Flannel CNI..."
             local flannel_url="https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml"
             kubectl apply -f "${flannel_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
             ;;
         *)
-            log_warn "Unknown CNI plugin '${CNI_PLUGIN}' — defaulting to Cilium"
-            local cilium_url="https://raw.githubusercontent.com/cilium/cilium/v1.15.1/install/kubernetes/quick-install.yaml"
-            kubectl apply -f "${cilium_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
+            log_warn "Plugin CNI desconocido '${CNI_PLUGIN}' — desplegando Cilium por defecto"
+            kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
             ;;
     esac
 
-    log_success "CNI plugin deployed: ${CNI_PLUGIN}"
+    log_success "Plugin CNI de Red desplegado: ${CNI_PLUGIN}"
 }
 
 _deploy_cni_airgap() {
@@ -1155,6 +1170,54 @@ main() {
     printf "\n  Cluster name [kubeops-cluster]: "
     read -r cluster_name
     cluster_name="${cluster_name:-kubeops-cluster}"
+
+    # === Selección interactiva de la Versión de Kubernetes ===
+    printf "\n  ${CLR_BOLD_WHITE}Seleccione la versión de Kubernetes a instalar:${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[1]${CLR_RESET} v1.29 (1.29.15) — Estable (Recomendada)\n"
+    printf "  ${CLR_CYAN}[2]${CLR_RESET} v1.30 (1.30.10) — Versión Reciente\n"
+    printf "  ${CLR_CYAN}[3]${CLR_RESET} v1.28 (1.28.15) — Versión Legacy\n"
+    printf "  ${CLR_CYAN}[4]${CLR_RESET} Personalizada (ingresar versión manualmente)\n"
+    printf "  ${CLR_BOLD_WHITE}Selección [1]: ${CLR_RESET}"
+    read -r v_choice
+    case "${v_choice}" in
+        2)
+            K8S_VERSION="1.30"
+            K8S_VERSION_FULL="1.30.10"
+            ;;
+        3)
+            K8S_VERSION="1.28"
+            K8S_VERSION_FULL="1.28.15"
+            ;;
+        4)
+            printf "  Ingrese la versión exacta (ej: 1.29.3): "
+            read -r custom_v
+            if [[ -n "${custom_v}" ]]; then
+                K8S_VERSION_FULL="${custom_v#v}"
+                K8S_VERSION="$(echo "${K8S_VERSION_FULL}" | cut -d. -f1,2)"
+            fi
+            ;;
+        *)
+            K8S_VERSION="1.29"
+            K8S_VERSION_FULL="1.29.15"
+            ;;
+    esac
+    K8S_APT_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/"
+    K8S_RPM_REPO="https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/rpm/"
+    log_info "Versión de Kubernetes seleccionada: v${K8S_VERSION_FULL}"
+
+    # === Selección interactiva del Plugin CNI (Red) ===
+    printf "\n  ${CLR_BOLD_WHITE}Seleccione el CNI (Plugin de Red):${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[1]${CLR_RESET} Cilium v1.15 (eBPF High Performance - Recomendado)\n"
+    printf "  ${CLR_CYAN}[2]${CLR_RESET} Calico v3.27 (BGP / Red Estándar)\n"
+    printf "  ${CLR_CYAN}[3]${CLR_RESET} Flannel (Overlay ligero)\n"
+    printf "  ${CLR_BOLD_WHITE}Selección [1]: ${CLR_RESET}"
+    read -r cni_choice
+    case "${cni_choice}" in
+        2) CNI_PLUGIN="calico" ;;
+        3) CNI_PLUGIN="flannel" ;;
+        *) CNI_PLUGIN="cilium" ;;
+    esac
+    log_info "Plugin de Red (CNI) seleccionado: ${CNI_PLUGIN}"
 
     # Save initial state
     state_set_cluster_name "${cluster_name}"
