@@ -68,10 +68,11 @@ _show_join_commands() {
 
     # Always generate/refresh active token & cert_key directly from kubeadm if master is running
     if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
-        # Ensure kube-apiserver allows unauthenticated discovery for kubeadm join
+        # Ensure kube-apiserver explicitly enables anonymous-auth=true for kubeadm join discovery
         if [[ -f /etc/kubernetes/manifests/kube-apiserver.yaml ]]; then
-            if grep -q "anonymous-auth" /etc/kubernetes/manifests/kube-apiserver.yaml; then
+            if ! grep -q "anonymous-auth=true" /etc/kubernetes/manifests/kube-apiserver.yaml; then
                 sudo sed -i '/anonymous-auth/d' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
+                sudo sed -i '/- --authorization-mode=Node,RBAC/a \    - --anonymous-auth=true' /etc/kubernetes/manifests/kube-apiserver.yaml 2>/dev/null || true
             fi
         fi
 
