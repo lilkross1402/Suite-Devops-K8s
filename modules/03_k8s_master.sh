@@ -784,6 +784,11 @@ _build_kubeadm_init_config() {
         fi
     fi
 
+    local endpoint="${CONTROL_PLANE_ENDPOINT:-${master_ip}:6443}"
+    if [[ "${endpoint}" != *":"* ]]; then
+        endpoint="${endpoint}:6443"
+    fi
+
     sudo tee "${config_file}" > /dev/null <<EOF
 ---
 apiVersion: kubeadm.k8s.io/v1beta3
@@ -801,7 +806,7 @@ apiVersion: kubeadm.k8s.io/v1beta3
 kind: ClusterConfiguration
 clusterName: "${cluster_name}"
 kubernetesVersion: "v${K8S_VERSION_FULL}"
-controlPlaneEndpoint: "${master_ip}:6443"
+controlPlaneEndpoint: "${endpoint}"
 networking:
   podSubnet: "${POD_CIDR}"
   serviceSubnet: "${SERVICE_CIDR}"

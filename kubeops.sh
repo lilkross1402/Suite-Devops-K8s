@@ -389,6 +389,9 @@ _print_menu() {
     _print_menu_item "9" "🔴" "Caché Redis" \
         "Redis Standalone / Clúster vía Helm"
 
+    _print_menu_item "H" "🛡️ " "Virtual IP (HAProxy + Keepalived)" \
+        "Desplegar IP Flotante HA para el Control Plane"
+
     _print_menu_separator
 
     # Utilities section
@@ -555,6 +558,18 @@ _handle_add_ha_master() {
     pause
 }
 
+_handle_deploy_haproxy_keepalived() {
+    local script="${SUITE_ROOT}/stack/deploy_haproxy_keepalived.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        deploy_haproxy_keepalived
+    else
+        log_error "Script de HAProxy no encontrado: ${script}"
+    fi
+    pause
+}
+
 _handle_show_logs() {
     local log_file="${KUBEOPS_LOG_DIR:-/var/log/kubeops}/kubeops-$(date +%Y%m%d).log"
     if [[ ! -f "${log_file}" ]]; then
@@ -626,6 +641,10 @@ _main_loop() {
                 backup_path=$(state_backup)
                 log_success "Backup created: ${backup_path}"
                 pause ;;
+
+            [hH])
+                clear
+                _handle_deploy_haproxy_keepalived ;;
 
             [lL])
                 clear
