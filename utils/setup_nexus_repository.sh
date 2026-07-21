@@ -66,7 +66,11 @@ _ensure_container_engine() {
     fi
 
     log_info "Actualizando índices de paquetes del sistema..."
-    os_update_pkg || true
+    if declare -f os_update_package_cache &>/dev/null; then
+        os_update_package_cache || true
+    else
+        sudo apt-get update -qq 2>/dev/null || true
+    fi
 
     log_info "Instalando Docker Engine desatendido..."
     os_install_pkg docker.io || os_install_pkg docker
