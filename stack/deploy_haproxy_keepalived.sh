@@ -106,6 +106,10 @@ vrrp_instance VI_1 {
 }
 EOF
 
+    # Enable non-local bind so HAProxy can listen on floating VIP
+    sudo sysctl -w net.ipv4.ip_nonlocal_bind=1 2>/dev/null || true
+    echo "net.ipv4.ip_nonlocal_bind=1" | sudo tee /etc/sysctl.d/99-haproxy-vip.conf > /dev/null
+
     # 2. Configurar HAProxy
     log_info "Configurando HAProxy para balancear el puerto 8443 → API Servers (puerto 6443)..."
     sudo tee /etc/haproxy/haproxy.cfg > /dev/null <<EOF
@@ -127,7 +131,7 @@ defaults
     timeout server  50000ms
 
 frontend k8s-api-frontend
-    bind ${vip_ip}:8443
+    bind *:8443
     mode tcp
     option tcplog
     default_backend k8s-api-backend
