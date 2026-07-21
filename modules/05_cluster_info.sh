@@ -97,7 +97,7 @@ _show_join_commands() {
     else
         log_warn "Sin comandos de join almacenados — inicialice primero el clúster (Opción 3)"
     fi
-}
+
     # Token validity
     printf "  ${CLR_BOLD_WHITE}Estado del Token:${CLR_RESET}\n"
     if state_is_token_valid 2>/dev/null; then
