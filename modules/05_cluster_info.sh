@@ -60,37 +60,31 @@ _show_resources() {
 _show_join_commands() {
     log_section "Comandos de Unión (Join)"
 
-    local token endpoint ca_hash
-    token=$(state_get ".join.token")
-    endpoint=$(state_get ".join.control_plane_endpoint")
-    ca_hash=$(state_get ".join.ca_cert_hash")
+    local token endpoint ca_hash cert_key
+    endpoint=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "")
+    if [[ -z "${endpoint}" || "${endpoint}" == "null" ]]; then
+        endpoint=$(net_get_primary_ip)
+    fi
 
-    # Auto-repair token if needed
-    if [[ "${token}" =~ "INFO" || "${token}" =~ "ERROR" || -z "${token}" || "${token}" == "null" ]]; then
-        if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
-            token=$(sudo kubeadm token create 2>/dev/null | head -1 || echo "")
-            ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
-                openssl rsa -pubin -outform der 2>/dev/null | \
-                openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}' || echo "")
-            endpoint=$(net_get_primary_ip)
-            if [[ -n "${token}" && -n "${ca_hash}" ]]; then
-                state_save_join_token "${token}" "${ca_hash}" ""
-            fi
+    # Always generate/refresh active token & cert_key directly from kubeadm if master is running
+    if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
+        token=$(sudo kubeadm token create 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
+        ca_hash=$(sudo openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt 2>/dev/null | \
+            openssl rsa -pubin -outform der 2>/dev/null | \
+            openssl dgst -sha256 -hex 2>/dev/null | awk '{print $2}' || echo "")
+        cert_key=$(sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
+
+        if [[ -n "${token}" && -n "${ca_hash}" ]]; then
+            state_save_join_token "${token}" "${ca_hash}" "${cert_key}"
+            state_set ".join.control_plane_endpoint" "${endpoint}"
         fi
+    else
+        token=$(state_get ".join.token" 2>/dev/null || echo "")
+        ca_hash=$(state_get ".join.ca_cert_hash" 2>/dev/null || echo "")
+        cert_key=$(state_get ".join.certificate_key" 2>/dev/null || echo "")
     fi
 
     if [[ -n "${token}" && "${token}" != "null" && ! "${token}" =~ "INFO" ]]; then
-        local cert_key
-        cert_key=$(state_get ".join.certificate_key" 2>/dev/null || echo "")
-        if [[ -z "${cert_key}" || "${cert_key}" == "null" ]]; then
-            if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
-                cert_key=$(sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
-                if [[ -n "${cert_key}" ]]; then
-                    state_set ".join.certificate_key" "${cert_key}"
-                fi
-            fi
-        fi
-
         printf "\n  ${CLR_BOLD_WHITE}1. Para agregar un Nodo Worker (Trabajador):${CLR_RESET}\n"
         printf "  ${CLR_BOLD_YELLOW}kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:%s${CLR_RESET}\n\n" \
             "${endpoint}" "${token}" "${ca_hash}"
@@ -103,7 +97,7 @@ _show_join_commands() {
     else
         log_warn "Sin comandos de join almacenados — inicialice primero el clúster (Opción 3)"
     fi
-
+}
     # Token validity
     printf "  ${CLR_BOLD_WHITE}Estado del Token:${CLR_RESET}\n"
     if state_is_token_valid 2>/dev/null; then
