@@ -80,9 +80,26 @@ _show_join_commands() {
     fi
 
     if [[ -n "${token}" && "${token}" != "null" && ! "${token}" =~ "INFO" ]]; then
-        printf "\n  ${CLR_BOLD_WHITE}Para agregar un Nodo Worker (Trabajador):${CLR_RESET}\n"
+        local cert_key
+        cert_key=$(state_get ".join.certificate_key" 2>/dev/null || echo "")
+        if [[ -z "${cert_key}" || "${cert_key}" == "null" ]]; then
+            if command -v kubeadm &>/dev/null && [[ -f /etc/kubernetes/admin.conf ]]; then
+                cert_key=$(sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1 | tr -d '[:space:]' || echo "")
+                if [[ -n "${cert_key}" ]]; then
+                    state_set ".join.certificate_key" "${cert_key}"
+                fi
+            fi
+        fi
+
+        printf "\n  ${CLR_BOLD_WHITE}1. Para agregar un Nodo Worker (Trabajador):${CLR_RESET}\n"
         printf "  ${CLR_BOLD_YELLOW}kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:%s${CLR_RESET}\n\n" \
             "${endpoint}" "${token}" "${ca_hash}"
+
+        if [[ -n "${cert_key}" && "${cert_key}" != "null" ]]; then
+            printf "  ${CLR_BOLD_WHITE}2. Para agregar otro Nodo Máster (HA Control Plane):${CLR_RESET}\n"
+            printf "  ${CLR_BOLD_CYAN}kubeadm join %s:6443 --token %s --discovery-token-ca-cert-hash sha256:%s --control-plane --certificate-key %s${CLR_RESET}\n\n" \
+                "${endpoint}" "${token}" "${ca_hash}" "${cert_key}"
+        fi
     else
         log_warn "Sin comandos de join almacenados — inicialice primero el clúster (Opción 3)"
     fi
