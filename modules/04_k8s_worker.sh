@@ -201,7 +201,21 @@ _setup_k8s_worker_binaries() {
     fi
 
     if net_is_online; then
-        _install_k8s_binaries_online
+        log_info "Configurando repositorio oficial de Kubernetes v${K8S_VERSION} en apt..."
+        sudo install -m 0755 -d /etc/apt/keyrings 2>/dev/null || true
+        curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null || true
+        sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null || true
+
+        echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" | \
+            sudo tee /etc/apt/sources.list.d/kubernetes.list > /dev/null
+
+        log_info "Actualizando indice de paquetes e instalando kubelet, kubeadm, kubectl..."
+        sudo apt-get update -qq 2>/dev/null || true
+        sudo env NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" kubelet kubeadm kubectl
+        sudo apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
+        sudo systemctl enable kubelet 2>/dev/null || true
+        log_success "Binarios de Kubernetes instalados correctamente en el Worker."
     else
         _install_k8s_binaries_airgap
     fi
