@@ -514,9 +514,9 @@ _handle_add_ha_master() {
         local_ip=$(net_get_primary_ip)
 
         log_info "Configurando resiliencia HA automática en servicios locales de este Máster..."
-        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
-        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/controller-manager.conf 2>/dev/null || true
-        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/scheduler.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/controller-manager.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/scheduler.conf 2>/dev/null || true
         sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/admin.conf 2>/dev/null || true
 
         sudo systemctl restart kubelet 2>/dev/null || true
