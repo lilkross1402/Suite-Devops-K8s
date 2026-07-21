@@ -846,32 +846,29 @@ _run_kubeadm_init() {
     local config_file
     config_file=$(_build_kubeadm_init_config "${master_ip}" "${cluster_name}")
 
-    log_info "Pulling required container images..."
+    log_info "Pulling required Kubernetes container images (kube-apiserver, etcd, coredns)..."
     if net_is_online; then
-        sudo kubeadm config images pull --config "${config_file}" 2>&1 | \
-            while IFS= read -r line; do log_debug "${line}"; done || true
+        sudo kubeadm config images pull --config "${config_file}" || true
+        log_success "Kubernetes container images pulled"
     else
         log_info "Air-gap mode — skipping image pull (using local registry/pre-loaded images)"
     fi
 
-    log_info "Initializing Kubernetes control plane..."
-    local init_output
-    local init_log="/tmp/kubeops-kubeadm-init.log"
+    log_info "Initializing Kubernetes control plane (this takes 1-2 minutes)..."
+    export KUBEOPS_KUBEADM_INIT_LOG="/tmp/kubeops-kubeadm-init.log"
 
     if ! sudo kubeadm init \
         --config "${config_file}" \
         --upload-certs \
         --v=5 \
-        2>&1 | tee "${init_log}" | \
-        while IFS= read -r line; do log_debug "${line}"; done; then
+        2>&1 | tee "${KUBEOPS_KUBEADM_INIT_LOG}"; then
 
-        log_error "kubeadm init FAILED — full log at ${init_log}"
-        tail -30 "${init_log}" | while IFS= read -r l; do log_error "${l}"; done
+        log_error "kubeadm init FAILED — full log at ${KUBEOPS_KUBEADM_INIT_LOG}"
+        tail -30 "${KUBEOPS_KUBEADM_INIT_LOG}" | while IFS= read -r l; do log_error "${l}"; done
         return 1
     fi
 
     log_success "kubeadm init completed successfully"
-    echo "${init_log}"
 }
 
 _extract_join_credentials() {
@@ -927,9 +924,18 @@ _deploy_cni_online() {
                     --set ipam.mode=kubernetes \
                     --kubeconfig="${KUBECONFIG_LOCAL}"
             else
-                log_info "Helm not found — deploying Cilium CNI via official manifest..."
+                log_info "Downloading Cilium CNI v1.15.1 manifest..."
                 local cilium_url="https://raw.githubusercontent.com/cilium/cilium/v1.15.1/install/kubernetes/quick-install.yaml"
-                kubectl apply -f "${cilium_url}" --kubeconfig="${KUBECONFIG_LOCAL}"
+                local tmp_cilium="/tmp/cilium-quick-install.yaml"
+
+                if curl -fsSL "${cilium_url}" -o "${tmp_cilium}"; then
+                    log_info "Applying Cilium CNI manifest to cluster..."
+                    kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_LOCAL}"
+                    rm -f "${tmp_cilium}"
+                else
+                    log_warn "Cilium download failed — falling back to Calico CNI"
+                    kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig="${KUBECONFIG_LOCAL}"
+                fi
             fi
             ;;
         calico)
@@ -1174,8 +1180,8 @@ main() {
     fi
 
     # === 4. Run kubeadm init ===
-    local init_log
-    init_log=$(_run_kubeadm_init "${master_ip}" "${cluster_name}")
+    _run_kubeadm_init "${master_ip}" "${cluster_name}"
+    local init_log="${KUBEOPS_KUBEADM_INIT_LOG:-/tmp/kubeops-kubeadm-init.log}"
 
     # === Setup kubeconfig with secure permissions ===
     _setup_kubeconfig
