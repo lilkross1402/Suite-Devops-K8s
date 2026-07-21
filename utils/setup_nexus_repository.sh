@@ -65,6 +65,9 @@ _ensure_container_engine() {
         return 0
     fi
 
+    log_info "Actualizando índices de paquetes del sistema..."
+    os_update_pkg || true
+
     log_info "Instalando Docker Engine desatendido..."
     os_install_pkg docker.io || os_install_pkg docker
     sudo systemctl enable docker
