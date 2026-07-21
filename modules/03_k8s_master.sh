@@ -815,7 +815,6 @@ apiServer:
     audit-log-maxbackup: "10"
     audit-log-maxsize: "100"
     tls-min-version: VersionTLS12
-    anonymous-auth: "false"
 controllerManager:
   extraArgs:
     bind-address: 0.0.0.0
