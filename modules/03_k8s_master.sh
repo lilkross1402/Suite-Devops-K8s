@@ -1035,6 +1035,13 @@ _setup_kubeconfig() {
 
     # 3. Exportar KUBECONFIG
     export KUBECONFIG="/root/.kube/config"
+
+    # 4. Asegurar permisos RBAC públicos para cluster-info en kube-public
+    sudo kubectl create clusterrolebinding kubeadm:bootstrap-signer-cluster-info \
+        --clusterrole=system:public-info-viewer \
+        --group=system:anonymous \
+        --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
+
     log_success "kubeconfig activado correctamente sin requerir pasos manuales."
 }
 
