@@ -102,45 +102,57 @@ _master_preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# Containerd Installation
+# ---------------------------------------------------------------------------
+# Containerd Installation (Zero-Fail Implementation)
 # ---------------------------------------------------------------------------
 
-_install_containerd_online() {
-    log_step 1 6 "Installing containerd (ONLINE mode)"
+_wait_for_apt_lock() {
+    local count=0
+    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+          sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+        if [[ "${count}" -eq 0 ]]; then
+            log_info "Esperando a que finalicen las actualizaciones automáticas del sistema (apt lock)..."
+        fi
+        sleep 3
+        count=$(( count + 3 ))
+        if [[ "${count}" -gt 120 ]]; then
+            log_warn "Liberando candado de apt atascado..."
+            sudo killall apt-get apt 2>/dev/null || true
+            sudo rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock* /var/cache/apt/archives/lock 2>/dev/null || true
+            sudo dpkg --configure -a 2>/dev/null || true
+            break
+        fi
+    done
+}
 
-    # Ensure PATH includes standard binary paths
-    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
-
-    # Check if containerd binary is already installed and functional
-    if command -v containerd &>/dev/null && systemctl list-unit-files containerd.service 2>/dev/null | grep -q containerd; then
-        log_success "containerd binary and service are already present"
-        _ensure_containerd_systemd_service
-        _configure_containerd
+_ensure_containerd_binaries() {
+    # If containerd is already installed and in PATH, we're good
+    if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]] || [[ -x /usr/local/bin/containerd ]]; then
+        log_success "Binario containerd presente en el sistema"
         return 0
     fi
 
-    log_info "Installing containerd package..."
+    log_info "Instalando paquete containerd..."
     local installed=false
 
     case "${OS_FAMILY}" in
         debian)
             export DEBIAN_FRONTEND=noninteractive
-            # Update apt cache
-            sudo apt-get update -qq 2>/dev/null || true
+            _wait_for_apt_lock
 
-            # Try 1: Standard Ubuntu/Debian official containerd package
-            log_info "Attempting apt-get install containerd..."
+            # Intento 1: Paquete oficial del sistema Ubuntu/Debian
+            log_info "Intentando instalacion via apt (repo del sistema)..."
+            sudo apt-get update -qq 2>/dev/null || true
             if sudo apt-get install -y containerd >/tmp/apt-containerd.log 2>&1; then
-                if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]]; then
-                    installed=true
-                    log_success "containerd package installed via apt (system repo)"
-                fi
-            else
-                log_warn "apt-get install containerd failed — checking Docker repo..."
+                installed=true
+                log_success "containerd instalado exitosamente via apt"
             fi
 
-            # Try 2: Docker official containerd.io package if system package failed
+            # Intento 2: Repo oficial de Docker si apt fallo
             if [[ "${installed}" != "true" ]]; then
+                log_warn "apt nativo no instalo containerd — intentando repositorio de Docker..."
+                _wait_for_apt_lock
                 sudo install -m 0755 -d /etc/apt/keyrings 2>/dev/null || true
                 curl -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" 2>/dev/null | \
                     sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
@@ -151,58 +163,94 @@ _install_containerd_online() {
                         sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
                     sudo apt-get update -qq 2>/dev/null || true
                     if sudo apt-get install -y containerd.io >/dev/null 2>&1; then
-                        if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]]; then
-                            installed=true
-                            log_success "containerd.io package installed via Docker repo"
-                        fi
-                    fi
-                fi
-            fi
-
-            # Try 3: Direct GitHub release tarball fallback (100% guaranteed)
-            if ! command -v containerd &>/dev/null && [[ ! -x /usr/bin/containerd ]]; then
-                log_warn "Apt packages failed — downloading official containerd release binary from GitHub..."
-                local c_ver="1.7.13"
-                local c_url="https://github.com/containerd/containerd/releases/download/v${c_ver}/containerd-${c_ver}-linux-amd64.tar.gz"
-                if curl -fsSL "${c_url}" -o /tmp/containerd.tar.gz 2>/dev/null; then
-                    sudo tar -C /usr/local -xzf /tmp/containerd.tar.gz 2>/dev/null || sudo tar -C /usr -xzf /tmp/containerd.tar.gz 2>/dev/null
-                    rm -f /tmp/containerd.tar.gz
-                    sudo cp -f /usr/local/bin/containerd* /usr/bin/ 2>/dev/null || true
-                    sudo cp -f /usr/local/bin/ctr /usr/bin/ 2>/dev/null || true
-                    if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]]; then
                         installed=true
-                        log_success "containerd ${c_ver} installed directly from GitHub release"
+                        log_success "containerd.io instalado via repo Docker"
                     fi
                 fi
             fi
             ;;
 
         rhel)
-            sudo ${PKG_MANAGER} install -y containerd 2>/dev/null || \
-            sudo ${PKG_MANAGER} install -y containerd.io 2>/dev/null || true
+            if sudo ${PKG_MANAGER} install -y containerd 2>/dev/null || sudo ${PKG_MANAGER} install -y containerd.io 2>/dev/null; then
+                installed=true
+                log_success "containerd instalado via ${PKG_MANAGER}"
+            fi
             ;;
     esac
 
-    # Ensure runc is present
-    if ! command -v runc &>/dev/null; then
-        log_info "Installing runc dependency..."
+    # Intento 3 (Respaldo definitivo): Descarga directa del binario oficial de GitHub
+    if [[ ! -x /usr/bin/containerd && ! -x /usr/local/bin/containerd ]]; then
+        log_warn "Los paquetes de la distribucion no se pudieron instalar — descargando binario oficial de GitHub..."
+        local c_ver="1.7.13"
+        local c_url="https://github.com/containerd/containerd/releases/download/v${c_ver}/containerd-${c_ver}-linux-amd64.tar.gz"
+        
+        if curl -fsSL "${c_url}" -o /tmp/containerd.tar.gz; then
+            sudo tar -C /usr/local -xzf /tmp/containerd.tar.gz 2>/dev/null || sudo tar -C /usr -xzf /tmp/containerd.tar.gz 2>/dev/null
+            rm -f /tmp/containerd.tar.gz
+
+            # Copiar binarios a /usr/bin/ y /usr/local/bin/ para asegurar visibilidad total
+            sudo mkdir -p /usr/bin /usr/local/bin
+            sudo cp -f /usr/local/bin/containerd* /usr/bin/ 2>/dev/null || true
+            sudo cp -f /usr/local/bin/ctr /usr/bin/ 2>/dev/null || true
+            log_success "containerd v${c_ver} instalado desde release de GitHub"
+        else
+            log_fatal "No se pudo descargar containerd desde GitHub ni instalar mediante paquetes."
+        fi
+    fi
+
+    # Asegurar runc
+    if ! command -v runc &>/dev/null && [[ ! -x /usr/bin/runc ]] && [[ ! -x /usr/local/sbin/runc ]]; then
+        log_info "Instalando dependencia runc..."
         sudo apt-get install -y runc 2>/dev/null || {
             curl -fsSL "https://github.com/opencontainers/runc/releases/download/v1.1.12/runc.amd64" -o /tmp/runc 2>/dev/null && \
-            sudo install -m 755 /tmp/runc /usr/bin/runc 2>/dev/null || true
+            sudo install -m 755 /tmp/runc /usr/bin/runc 2>/dev/null && \
             sudo install -m 755 /tmp/runc /usr/local/sbin/runc 2>/dev/null || true
         }
     fi
+}
 
-    # Final check: ensure containerd is present
-    if ! command -v containerd &>/dev/null && [[ ! -x /usr/bin/containerd ]] && [[ ! -x /usr/local/bin/containerd ]]; then
-        log_fatal "containerd binary could not be installed on this system. Check network connection and disk space."
+_ensure_containerd_systemd_service() {
+    local service_file="/etc/systemd/system/containerd.service"
+    if [[ ! -f "${service_file}" && ! -f "/lib/systemd/system/containerd.service" ]]; then
+        log_info "Creando servicio systemd para containerd..."
+        local exec_path="/usr/bin/containerd"
+        [[ -x /usr/local/bin/containerd ]] && exec_path="/usr/local/bin/containerd"
+
+        sudo tee "${service_file}" > /dev/null <<EOF
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network.target local-fs.target
+
+[Service]
+ExecStartPre=-/sbin/modprobe overlay
+ExecStart=${exec_path}
+Type=notify
+Delegate=yes
+KillMode=process
+Restart=always
+RestartSec=5
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+TasksMax=infinity
+OOMScoreAdjust=-999
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        sudo systemctl daemon-reload
     fi
+}
 
-    # Ensure systemd service file exists
+_install_containerd_online() {
+    log_step 1 6 "Installing containerd (ONLINE mode)"
+    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+
+    _ensure_containerd_binaries
     _ensure_containerd_systemd_service
-
     _configure_containerd
-    log_success "containerd installed and configured successfully (online)"
+    log_success "containerd instalado y configurado correctamente (online)"
 }
 
     # Ensure systemd service file exists
