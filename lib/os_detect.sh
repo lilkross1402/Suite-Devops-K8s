@@ -8,7 +8,10 @@
 #           OS_FAMILY, OS_CODENAME, ARCH
 # Author  : KubeOps-Suite (Principal Platform Engineer)
 # =============================================================================
-set -euo pipefail
+if [[ -n "${_OS_DETECT_SH_LOADED:-}" ]]; then
+    return 0
+fi
+_OS_DETECT_SH_LOADED=true
 
 # Ensure logger is available
 if ! declare -f log_info &>/dev/null; then
