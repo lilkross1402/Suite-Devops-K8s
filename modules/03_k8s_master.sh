@@ -241,99 +241,18 @@ WantedBy=multi-user.target
 EOF
         sudo systemctl daemon-reload
     fi
-}
-
-_install_containerd_online() {
-    log_step 1 6 "Installing containerd (ONLINE mode)"
-    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
-
-    _ensure_containerd_binaries
-    _ensure_containerd_systemd_service
-    _configure_containerd
-    log_success "containerd instalado y configurado correctamente (online)"
-}
-
-    # Ensure systemd service file exists
-    _ensure_containerd_systemd_service
-
-    _configure_containerd
-    log_success "containerd installed and configured successfully (online)"
-}
-
-_install_containerd_airgap() {
-    log_step 1 6 "Installing containerd (AIR-GAP mode)"
-
-    # Look for containerd tarball in offline-assets
-    local containerd_tar
-    containerd_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "containerd*.tar.gz" 2>/dev/null | head -1 || echo "")
-
-    if [[ -z "${containerd_tar}" ]]; then
-        log_fatal "No containerd tarball found in ${OFFLINE_ASSETS_DIR}/. \
-Expected: containerd-<version>-linux-amd64.tar.gz"
-    fi
-
-    log_info "Installing containerd from: ${containerd_tar}"
-    sudo tar -C /usr/local -xzf "${containerd_tar}"
-
-    # Install containerd systemd service
-    local service_file="/etc/systemd/system/containerd.service"
-    if [[ ! -f "${service_file}" ]]; then
-        sudo tee "${service_file}" > /dev/null <<'EOF'
-[Unit]
-Description=containerd container runtime
-Documentation=https://containerd.io
-After=network.target local-fs.target
-
-[Service]
-ExecStartPre=-/sbin/modprobe overlay
-ExecStart=/usr/local/bin/containerd
-Type=notify
-Delegate=yes
-KillMode=process
-Restart=always
-RestartSec=5
-LimitNPROC=infinity
-LimitCORE=infinity
-LimitNOFILE=infinity
-TasksMax=infinity
-OOMScoreAdjust=-999
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    fi
-
-    # Install runc
-    local runc_bin
-    runc_bin=$(find "${OFFLINE_ASSETS_DIR}" -name "runc.amd64" -o -name "runc" 2>/dev/null | head -1 || echo "")
-    if [[ -n "${runc_bin}" ]]; then
-        sudo install -m 755 "${runc_bin}" /usr/local/sbin/runc
-        log_success "runc installed"
-    else
-        log_warn "runc binary not found in offline-assets — containerd may not start"
-    fi
-
-    # Install CNI plugins
-    local cni_tar
-    cni_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "cni-plugins*.tar.gz" 2>/dev/null | head -1 || echo "")
-    if [[ -n "${cni_tar}" ]]; then
-        sudo mkdir -p /opt/cni/bin
-        sudo tar -C /opt/cni/bin -xzf "${cni_tar}"
-        log_success "CNI plugins installed from tarball"
-    fi
-
-    _configure_containerd
-    log_success "containerd installed (air-gap)"
-}
-
 _configure_containerd() {
     log_info "Configuring containerd..."
 
     sudo mkdir -p "${CONTAINERD_CONFIG_DIR}"
 
     # Generate default config
-    if command -v containerd &>/dev/null; then
-        containerd config default | sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null
+    if command -v containerd &>/dev/null || [[ -x /usr/bin/containerd ]] || [[ -x /usr/local/bin/containerd ]]; then
+        local c_bin="containerd"
+        [[ -x /usr/bin/containerd ]] && c_bin="/usr/bin/containerd"
+        [[ -x /usr/local/bin/containerd ]] && c_bin="/usr/local/bin/containerd"
+
+        ${c_bin} config default | sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null
     else
         log_warn "containerd binary not found in PATH — writing minimal config"
         sudo tee "${CONTAINERD_CONFIG_DIR}/config.toml" > /dev/null <<'EOF'
@@ -367,7 +286,62 @@ EOF
     # Hook: inject Nexus mirrors if NEXUS_REGISTRY is set (additive, idempotent)
     _inject_nexus_mirrors_if_configured
 
-_ensure_containerd_systemd_service() {
+    # Enable and start containerd
+    sudo systemctl daemon-reload
+    sudo systemctl enable containerd 2>/dev/null || true
+    sudo systemctl restart containerd 2>/dev/null || true
+}
+
+_install_containerd_online() {
+    log_step 1 6 "Installing containerd (ONLINE mode)"
+    export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+
+    _ensure_containerd_binaries
+    _ensure_containerd_systemd_service
+    _configure_containerd
+    log_success "containerd instalado y configurado correctamente (online)"
+}
+
+_install_containerd_airgap() {
+    log_step 1 6 "Installing containerd (AIR-GAP mode)"
+
+    # Look for containerd tarball in offline-assets
+    local containerd_tar
+    containerd_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "containerd*.tar.gz" 2>/dev/null | head -1 || echo "")
+
+    if [[ -z "${containerd_tar}" ]]; then
+        log_fatal "No containerd tarball found in ${OFFLINE_ASSETS_DIR}/. \
+Expected: containerd-<version>-linux-amd64.tar.gz"
+    fi
+
+    log_info "Installing containerd from: ${containerd_tar}"
+    sudo tar -C /usr/local -xzf "${containerd_tar}"
+
+    _ensure_containerd_systemd_service
+
+    # Install runc
+    local runc_bin
+    runc_bin=$(find "${OFFLINE_ASSETS_DIR}" -name "runc.amd64" -o -name "runc" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${runc_bin}" ]]; then
+        sudo install -m 755 "${runc_bin}" /usr/local/sbin/runc
+        sudo install -m 755 "${runc_bin}" /usr/bin/runc 2>/dev/null || true
+        log_success "runc installed"
+    else
+        log_warn "runc binary not found in offline-assets — containerd may not start"
+    fi
+
+    # Install CNI plugins
+    local cni_tar
+    cni_tar=$(find "${OFFLINE_ASSETS_DIR}" -name "cni-plugins*.tar.gz" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${cni_tar}" ]]; then
+        sudo mkdir -p /opt/cni/bin
+        sudo tar -C /opt/cni/bin -xzf "${cni_tar}"
+        log_success "CNI plugins installed from tarball"
+    fi
+
+    _configure_containerd
+    log_success "containerd installed (air-gap)"
+}
     local service_file="/etc/systemd/system/containerd.service"
     if [[ ! -f "${service_file}" && ! -f "/lib/systemd/system/containerd.service" ]]; then
         log_info "Creating systemd service file for containerd: ${service_file}"
