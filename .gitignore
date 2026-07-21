@@ -1,0 +1,20 @@
+# State files and logs
+.kubeops/
+*.log
+.state.lock
+cluster-state.json
+
+# Offline assets (large tarballs)
+offline-assets/*.tar
+offline-assets/*.tar.gz
+offline-assets/*.tgz
+
+# Generated bundles
+nexus-airgap-bundle/
+*.env
+
+# System / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
