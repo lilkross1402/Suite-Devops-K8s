@@ -509,10 +509,17 @@ _handle_add_ha_master() {
 
         log_success "¡Nodo Máster HA unido exitosamente al Control Plane!"
 
-        # Configure kubeconfig to target this master's local IP for resilient HA CLI access
+        # Auto-configure local resilience: update kubelet, controller-manager, scheduler & admin config to target local API server
         local local_ip
         local_ip=$(net_get_primary_ip)
-        sudo kubectl config set-cluster kubernetes --server="https://${local_ip}:6443" --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
+
+        log_info "Configurando resiliencia HA automática en servicios locales de este Máster..."
+        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/kubelet.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/controller-manager.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://127.0.0.1:6443|g" /etc/kubernetes/scheduler.conf 2>/dev/null || true
+        sudo sed -i "s|https://${control_plane}:6443|https://${local_ip}:6443|g" /etc/kubernetes/admin.conf 2>/dev/null || true
+
+        sudo systemctl restart kubelet 2>/dev/null || true
 
         sudo mkdir -p /root/.kube
         sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
@@ -527,12 +534,12 @@ _handle_add_ha_master() {
             sudo chmod 600 "${u_home}/.kube/config" 2>/dev/null || true
         fi
 
-        state_save_master "$(net_get_primary_ip)" "$(hostname)" "ha-replica"
+        state_save_master "${local_ip}" "$(hostname)" "ha-replica"
         state_save_join_token "${token}" "${ca_hash}" "${cert_key}"
         state_set ".cluster.initialized" "true"
         state_set ".join.control_plane_endpoint" "${control_plane}"
 
-        log_success "kubeconfig configurado automáticamente en este Máster HA."
+        log_success "Servicios y kubeconfig configurados automáticamente con resiliencia HA en este Máster."
     else
         log_error "Falló la unión con kubeadm join."
     fi
