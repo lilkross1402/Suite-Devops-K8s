@@ -392,6 +392,9 @@ _print_menu() {
     _print_menu_item "H" "🛡️ " "Virtual IP (HAProxy + Keepalived)" \
         "Desplegar IP Flotante HA para el Control Plane"
 
+    _print_menu_item "N" "📦" "Aprovisionar Servidor Nexus 3" \
+        "Servidor de imágenes Docker para despliegues Air-Gapped"
+
     _print_menu_separator
 
     # Utilities section
@@ -570,6 +573,18 @@ _handle_deploy_haproxy_keepalived() {
     pause
 }
 
+_handle_setup_nexus_server() {
+    local script="${SUITE_ROOT}/utils/setup_nexus_repository.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        setup_nexus_server
+    else
+        log_error "Script de Nexus no encontrado: ${script}"
+    fi
+    pause
+}
+
 _handle_show_logs() {
     local log_file="${KUBEOPS_LOG_DIR:-/var/log/kubeops}/kubeops-$(date +%Y%m%d).log"
     if [[ ! -f "${log_file}" ]]; then
@@ -645,6 +660,10 @@ _main_loop() {
             [hH])
                 clear
                 _handle_deploy_haproxy_keepalived ;;
+
+            [nN])
+                clear
+                _handle_setup_nexus_server ;;
 
             [lL])
                 clear
