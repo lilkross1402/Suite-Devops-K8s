@@ -934,15 +934,23 @@ _deploy_cni_online() {
     case "${CNI_PLUGIN}" in
         cilium)
             log_info "Desplegando Cilium CNI v1.15.5..."
-            local cilium_manifest="https://raw.githubusercontent.com/cilium/cilium/v1.15.5/install/kubernetes/quick-install.yaml"
-            local tmp_cilium="/tmp/cilium-quick-install.yaml"
+            if ! command -v helm &>/dev/null; then
+                log_info "Instalando Helm..."
+                curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
+            fi
 
-            if curl -fsSL "${cilium_manifest}" -o "${tmp_cilium}"; then
-                kubectl apply -f "${tmp_cilium}" --kubeconfig="${KUBECONFIG_PATH}"
-                rm -f "${tmp_cilium}"
+            if command -v helm &>/dev/null; then
+                log_info "Desplegando Cilium vía Helm..."
+                helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
+                helm repo update cilium 2>/dev/null || true
+                helm install cilium cilium/cilium --version 1.15.5 \
+                    --namespace kube-system \
+                    --set nodeinit.enabled=true \
+                    --set ipam.mode=kubernetes \
+                    --kubeconfig="${KUBECONFIG_PATH}" || true
             else
-                log_info "Aplicando Cilium desde URL alternativa..."
-                kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/main/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_PATH}"
+                log_info "Desplegando Calico CNI como fallback de red..."
+                kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig="${KUBECONFIG_PATH}"
             fi
             ;;
         calico)
@@ -956,8 +964,8 @@ _deploy_cni_online() {
             kubectl apply -f "${flannel_url}" --kubeconfig="${KUBECONFIG_PATH}"
             ;;
         *)
-            log_warn "Plugin CNI desconocido '${CNI_PLUGIN}' — desplegando Cilium por defecto"
-            kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/v1.15.5/install/kubernetes/quick-install.yaml" --kubeconfig="${KUBECONFIG_PATH}"
+            log_warn "Plugin CNI desconocido '${CNI_PLUGIN}' — desplegando Calico"
+            kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig="${KUBECONFIG_PATH}"
             ;;
     esac
 
@@ -1251,17 +1259,19 @@ main() {
     _wait_for_control_plane
     _apply_security_policies
 
+    # === Save Master & Cluster State ===
+    state_save_master "${master_ip}" "$(hostname -f 2>/dev/null || hostname)" "primary"
+    state_set ".cluster.initialized" "true"
+    state_set ".join.control_plane_endpoint" "${master_ip}"
+    state_set ".cluster.pod_cidr" "${POD_CIDR}"
+    state_set ".cluster.service_cidr" "${SERVICE_CIDR}"
+
     # === Extract and persist join credentials ===
     local creds
     creds=$(_extract_join_credentials "${init_log}")
     local token ca_hash cert_key
     IFS='|' read -r token ca_hash cert_key <<< "${creds}"
-
-    # Save state
-    state_save_master "${master_ip}" "$(hostname -f 2>/dev/null || hostname)" "primary"
     state_save_join_token "${token}" "${ca_hash}" "${cert_key}"
-    state_set ".cluster.pod_cidr" "${POD_CIDR}"
-    state_set ".cluster.service_cidr" "${SERVICE_CIDR}"
 
     # === Print summary ===
     _print_cluster_summary "${master_ip}" "${token}" "${ca_hash}" "${cert_key}"
