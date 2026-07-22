@@ -367,6 +367,9 @@ _print_menu() {
     _print_menu_item "5" "💼" "Agregar Nodo Worker" \
         "Unir nodo trabajador al clúster"
 
+    _print_menu_item "A" "⚡" "Auto-Aprovisionar Clúster HA (Remoto vía SSH)" \
+        "Desplegar Clúster HA Completo (VIP+CPs+Workers) desde 1 solo nodo"
+
     _print_menu_separator
 
     # Observability section
@@ -615,6 +618,18 @@ _handle_show_gitops_resilience_menu() {
     fi
 }
 
+_handle_auto_provision_cluster() {
+    local script="${SUITE_ROOT}/utils/auto_provision_cluster.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        auto_provision_ha_cluster
+    else
+        log_error "Script de Auto-Aprovisionamiento no encontrado: ${script}"
+        pause
+    fi
+}
+
 _handle_show_logs() {
     local log_file="${KUBEOPS_LOG_DIR:-/var/log/kubeops}/kubeops-$(date +%Y%m%d).log"
     if [[ ! -f "${log_file}" ]]; then
@@ -702,6 +717,10 @@ _main_loop() {
             [gG])
                 clear
                 _handle_show_gitops_resilience_menu ;;
+
+            [aA])
+                clear
+                _handle_auto_provision_cluster ;;
 
             [lL])
                 clear
