@@ -111,6 +111,11 @@ sysctl --system -q 2>/dev/null || true
 swapoff -a
 sed -i '/\sswap\s/d' /etc/fstab || true
 
+# ---- Install storage drivers (open-iscsi, nfs-common) ----
+apt-get update -qq 2>/dev/null || true
+apt-get install -y --fix-missing --no-install-recommends open-iscsi nfs-common jq 2>/dev/null || true
+systemctl enable --now iscsid 2>/dev/null || true
+
 # ---- Install containerd ----
 if ! command -v containerd &>/dev/null; then
     apt-get update -qq
