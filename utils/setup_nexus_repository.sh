@@ -177,7 +177,7 @@ setup_nexus_server() {
         -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active"
 
-    # 4. Configurar Repositorio Docker Hosted (Puerto 8082) con Autenticación Básica Forzada
+    # 4. Configurar Repositorio Docker Hosted (Puerto 8082)
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
     local repo_payload='{
         "name": "docker-hosted",
@@ -191,8 +191,8 @@ setup_nexus_server() {
             "proprietaryComponents": true
         },
         "docker": {
-            "v1Enabled": false,
-            "forceBasicAuth": true,
+            "v1Enabled": true,
+            "forceBasicAuth": false,
             "httpPort": 8082
         }
     }'
