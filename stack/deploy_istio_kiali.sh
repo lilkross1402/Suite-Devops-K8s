@@ -42,7 +42,10 @@ deploy_istio_kiali() {
         log_warn "No se pudo descargar CRDs de Istio directamente desde GitHub. Asegúrese de conexión a Internet."
     }
 
-    # 2. Desplegar Kiali Dashboard Server (Oficial Istio Addon)
+    # 2. Desplegar Prometheus & Kiali Dashboard (Oficial Istio Addons)
+    log_info "Desplegando Prometheus Addon para métricas de Istio (namespace: istio-system)..."
+    kubectl apply -f "https://raw.githubusercontent.com/istio/istio/release-1.21/samples/addons/prometheus.yaml" 2>/dev/null || true
+
     log_info "Desplegando Kiali Dashboard Server (namespace: istio-system)..."
     kubectl apply -f "https://raw.githubusercontent.com/istio/istio/${istio_version}/samples/addons/kiali.yaml" 2>/dev/null || \
     kubectl apply -f "https://raw.githubusercontent.com/istio/istio/release-1.21/samples/addons/kiali.yaml"
