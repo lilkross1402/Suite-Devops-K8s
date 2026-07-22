@@ -280,11 +280,14 @@ frontend k8s-api
     bind *:8443
     default_backend k8s-masters
 backend k8s-masters
+    mode tcp
+    option httpchk GET /healthz
+    http-check expect status 200
     balance roundrobin
-    server master1 ${M1}:6443 check
-    server master2 ${M2}:6443 check
+    server master1 ${M1}:6443 check check-ssl verify none
+    server master2 ${M2}:6443 check check-ssl verify none
 EOF
-[[ -n "${M3}" ]] && echo "    server master3 ${M3}:6443 check" >>/etc/haproxy/haproxy.cfg
+[[ -n "${M3}" ]] && echo "    server master3 ${M3}:6443 check check-ssl verify none" >>/etc/haproxy/haproxy.cfg
 systemctl enable haproxy && systemctl restart haproxy
 
 # ---- Keepalived config ----
@@ -599,12 +602,16 @@ fi
 mkdir -p /root/.kube
 cp -f /etc/kubernetes/admin.conf /root/.kube/config
 chown root:root /root/.kube/config
+chmod 600 /root/.kube/config 2>/dev/null || true
 
 # Setup kubeconfig for OS user
 HOME_DIR=$(eval echo "~${OS_USER}")
 mkdir -p "${HOME_DIR}/.kube"
 cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config"
-chown -R "${OS_USER}:${OS_USER}" "${HOME_DIR}/.kube" || true
+chown -R "${OS_USER}:${OS_USER}" "${HOME_DIR}/.kube" 2>/dev/null || true
+chmod 600 "${HOME_DIR}/.kube/config" 2>/dev/null || true
+
+echo "export KUBECONFIG=/etc/kubernetes/admin.conf" > /etc/profile.d/k8s.sh
 
 echo "INIT_OK"
 REMOTE
@@ -684,24 +691,39 @@ REMOTE
     log_info "[Paso 6/6] Uniendo Másters Secundarios al Control Plane HA..."
     for ((i=1; i<${#master_ips[@]}; i++)); do
         local node="${master_ips[$i]}"
-        log_info "  Uniendo Control Plane ${node}..."
-        _ssh "${ssh_user}@${node}" "if [[ -f /etc/kubernetes/kubelet.conf ]]; then echo 'Node already joined, skipping kubeadm join.'; else sudo ${join_cmd} --control-plane --certificate-key ${cert_key}; fi" || true
+        log_info "  Verificando Control Plane ${node}..."
+        if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
+            log_info "  Uniendo Control Plane ${node} al clúster..."
+            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d"
+            _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
+        else
+            log_info "  Control Plane ${node} ya está unido activamente."
+        fi
+
         # kubeconfig para el usuario en CPs adicionales
         _ssh "${ssh_user}@${node}" bash -s -- "${ssh_user}" <<'REMOTE'
 set -euo pipefail
 U="${1}"
 HOME_DIR=$(eval echo "~${U}")
-mkdir -p "${HOME_DIR}/.kube"
-sudo cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" || true
+mkdir -p "${HOME_DIR}/.kube" /root/.kube
+sudo cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" 2>/dev/null || true
+sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
 sudo chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
+echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | sudo tee /etc/profile.d/k8s.sh >/dev/null || true
 REMOTE
     done
 
     # ── PASO 6b/6: Unir Workers ──────────────────────────────────────────────
     log_info "  Uniendo Nodos Workers al Clúster..."
     for node in "${worker_ips[@]}"; do
-        log_info "  Uniendo Worker ${node}..."
-        _ssh "${ssh_user}@${node}" "if [[ -f /etc/kubernetes/kubelet.conf ]]; then echo 'Worker already joined, skipping kubeadm join.'; else sudo ${join_cmd}; fi" || true
+        log_info "  Verificando Worker ${node}..."
+        if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
+            log_info "  Uniendo Worker ${node} al clúster..."
+            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d"
+            _ssh "${ssh_user}@${node}" "sudo ${join_cmd}" || true
+        else
+            log_info "  Worker ${node} ya está unido activamente."
+        fi
     done
 
     printf "\n"
