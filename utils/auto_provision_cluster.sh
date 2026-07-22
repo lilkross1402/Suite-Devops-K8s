@@ -84,9 +84,13 @@ REMOTE
 # ---------------------------------------------------------------------------
 _phase1_install_prereqs() {
     local node="${1}"
-    log_info "  [${node}] Instalando prerequisitos (containerd, kubeadm, kubelet, kubectl)..."
-    _ssh "${SSH_USER}@${node}" sudo bash -s <<'REMOTE'
+    local k8s_ver="${2:-1.29}"
+    local k8s_ver_full="${3:-1.29.15}"
+    log_info "  [${node}] Instalando prerequisitos (containerd, kubeadm v${k8s_ver_full}, kubelet, kubectl)..."
+    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${k8s_ver}" "${k8s_ver_full}" <<'REMOTE'
 set -euo pipefail
+K8S_VERSION="${1:-1.29}"
+K8S_VERSION_FULL="${2:-1.29.15}"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
 # ---- Kernel modules & sysctl ----
@@ -132,13 +136,16 @@ if ! command -v kubeadm &>/dev/null; then
     apt-get update -qq
     apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | \
+    curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | \
         gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
     echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
-https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" \
+https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" \
     >/etc/apt/sources.list.d/kubernetes.list
     apt-get update -qq
-    apt-get install -y --fix-missing kubelet=1.29.15-1.1 kubeadm=1.29.15-1.1 kubectl=1.29.15-1.1
+    apt-get install -y --fix-missing \
+        kubelet=${K8S_VERSION_FULL}-1.1 \
+        kubeadm=${K8S_VERSION_FULL}-1.1 \
+        kubectl=${K8S_VERSION_FULL}-1.1
     apt-mark hold kubelet kubeadm kubectl
 fi
 systemctl enable --now kubelet
@@ -284,6 +291,102 @@ auto_provision_ha_cluster() {
         SSH_OPTS+=("-i" "${ssh_key}")
     fi
 
+    # ── WIZARD: Versiones y Plugin CNI ─────────────────────────────────────
+    local k8s_version="1.29"
+    local k8s_version_full="1.29.15"
+    local cni_plugin="cilium"
+    local cni_version="1.15.5"
+    local pod_cidr="10.244.0.0/16"
+    local service_cidr="10.96.0.0/12"
+
+    printf "\n"
+    printf "  ══════════════════════════════════════════════════════════════\n"
+    printf "  ${CLR_BOLD_WHITE}Configuración de Versiones del Clúster${CLR_RESET}\n"
+    printf "  ══════════════════════════════════════════════════════════════\n\n"
+
+    # Versión de Kubernetes
+    printf "  ${CLR_BOLD_WHITE}[1] Seleccione la versión de Kubernetes a instalar:${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[1]${CLR_RESET} v1.29 (1.29.15) — Estable ${CLR_BOLD_GREEN}(Recomendada)${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[2]${CLR_RESET} v1.30 (1.30.10) — Versión Reciente\n"
+    printf "  ${CLR_CYAN}[3]${CLR_RESET} v1.28 (1.28.15) — Versión Legacy\n"
+    printf "  ${CLR_CYAN}[4]${CLR_RESET} Personalizada (ingresar versión manualmente)\n"
+    printf "  ${CLR_BOLD_WHITE}Selección [1]: ${CLR_RESET}"
+    read -r v_choice
+    case "${v_choice}" in
+        2) k8s_version="1.30"; k8s_version_full="1.30.10" ;;
+        3) k8s_version="1.28"; k8s_version_full="1.28.15" ;;
+        4)
+            printf "  Ingrese la versión exacta (ej: 1.29.15): "
+            read -r custom_v
+            if [[ -n "${custom_v}" ]]; then
+                k8s_version_full="${custom_v#v}"
+                k8s_version="$(echo "${k8s_version_full}" | cut -d. -f1,2)"
+            fi
+            ;;
+        *) k8s_version="1.29"; k8s_version_full="1.29.15" ;;
+    esac
+    log_info "Versión de Kubernetes seleccionada: v${k8s_version_full}"
+
+    # Plugin CNI
+    printf "\n  ${CLR_BOLD_WHITE}[2] Seleccione el Plugin de Red (CNI):${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[1]${CLR_RESET} Cilium (eBPF High-Performance) ${CLR_BOLD_GREEN}(Recomendado)${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[2]${CLR_RESET} Calico (BGP / Network Policy)\n"
+    printf "  ${CLR_CYAN}[3]${CLR_RESET} Flannel (Overlay ligero)\n"
+    printf "  ${CLR_BOLD_WHITE}Selección [1]: ${CLR_RESET}"
+    read -r cni_choice
+    case "${cni_choice}" in
+        2)
+            cni_plugin="calico"
+            printf "  Versión de Calico [3.27.4]: "
+            read -r calico_v
+            cni_version="${calico_v:-3.27.4}"
+            ;;
+        3)
+            cni_plugin="flannel"
+            cni_version="0.24.2"
+            ;;
+        *)
+            cni_plugin="cilium"
+            printf "  Versión de Cilium [1.15.5]: "
+            read -r cilium_v
+            cni_version="${cilium_v:-1.15.5}"
+            ;;
+    esac
+    log_info "CNI seleccionado: ${cni_plugin} v${cni_version}"
+
+    # CIDRs
+    printf "\n  ${CLR_BOLD_WHITE}[3] Configuración de CIDRs de Red:${CLR_RESET}\n"
+    printf "  Pod Network CIDR [%s]: " "${pod_cidr}"
+    read -r pod_cidr_input
+    pod_cidr="${pod_cidr_input:-${pod_cidr}}"
+
+    printf "  Service CIDR [%s]: " "${service_cidr}"
+    read -r svc_cidr_input
+    service_cidr="${svc_cidr_input:-${service_cidr}}"
+
+    log_info "Pod CIDR: ${pod_cidr} | Service CIDR: ${service_cidr}"
+
+    # Resumen antes de continuar
+    printf "\n"
+    printf "  ══════════════════════════════════════════════════════════════\n"
+    printf "  ${CLR_BOLD_WHITE}  RESUMEN DE CONFIGURACIÓN DEL CLÚSTER${CLR_RESET}\n"
+    printf "  ══════════════════════════════════════════════════════════════\n"
+    printf "  %-28s ${CLR_BOLD_GREEN}%s${CLR_RESET}\n" "Virtual IP (VIP):"         "${vip_ip}:8443"
+    printf "  %-28s %s\n"                              "Control Planes:"           "${master_ips[*]}"
+    printf "  %-28s %s\n"                              "Workers:"                  "${worker_ips[*]}"
+    printf "  %-28s ${CLR_BOLD_CYAN}v%s${CLR_RESET}\n" "Kubernetes:"               "${k8s_version_full}"
+    printf "  %-28s ${CLR_BOLD_CYAN}%s v%s${CLR_RESET}\n" "CNI Plugin:"             "${cni_plugin}" "${cni_version}"
+    printf "  %-28s %s\n"                              "Pod CIDR:"                 "${pod_cidr}"
+    printf "  %-28s %s\n"                              "Service CIDR:"             "${service_cidr}"
+    printf "  ══════════════════════════════════════════════════════════════\n\n"
+    printf "  ¿Confirmar y comenzar el despliegue completo? [y/N]: "
+    read -r confirm
+    if [[ ! "${confirm}" =~ ^[yY]$ ]]; then
+        log_warn "Despliegue cancelado por el usuario."
+        return 0
+    fi
+
+
     local master1_ip="${master_ips[0]}"
     local master2_ip="${master_ips[1]:-}"
     local master3_ip="${master_ips[2]:-}"
@@ -308,10 +411,10 @@ auto_provision_ha_cluster() {
     log_success "kubeops-suite sincronizado en todos los nodos."
 
     # ── PASO 3/6: Instalar prereqs en todos los nodos ────────────────────────
-    log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm, kubelet) en todos los nodos..."
+    log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en todos los nodos..."
     log_warn "  Este paso puede tardar 5-10 minutos por nodo..."
     for node in "${all_nodes[@]}"; do
-        _phase1_install_prereqs "${node}"
+        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}"
     done
     log_success "Prerequisitos instalados en todos los nodos."
 
@@ -326,18 +429,19 @@ auto_provision_ha_cluster() {
     sleep 5  # Esperar convergencia VRRP
 
     # ── PASO 5/6: kubeadm init en Máster 1 ──────────────────────────────────
-    log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip}..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" <<'REMOTE'
+    log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip} (K8s v${k8s_version_full})..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" <<'REMOTE'
 set -euo pipefail
-VIP="${1}"
+VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"
 mkdir -p "${HOME}/.kube"
 
 kubeadm init \
     --control-plane-endpoint "${VIP}:8443" \
     --upload-certs \
-    --pod-network-cidr=10.244.0.0/16 \
+    --pod-network-cidr="${POD_CIDR}" \
+    --service-cidr="${SVC_CIDR}" \
     --skip-phases=addon/kube-proxy \
-    --kubernetes-version=1.29.15 \
+    --kubernetes-version="${K8S_VER}" \
     2>&1
 
 # Setup kubeconfig for root
@@ -345,11 +449,11 @@ mkdir -p /root/.kube
 cp -f /etc/kubernetes/admin.conf /root/.kube/config
 chown root:root /root/.kube/config
 
-# Setup kubeconfig for ubuntu user
-HOME_DIR=$(eval echo "~${SUDO_USER:-ubuntu}")
+# Setup kubeconfig for OS user
+HOME_DIR=$(eval echo "~${OS_USER}")
 mkdir -p "${HOME_DIR}/.kube"
 cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config"
-chown -R "${SUDO_USER:-ubuntu}:${SUDO_USER:-ubuntu}" "${HOME_DIR}/.kube" || true
+chown -R "${OS_USER}:${OS_USER}" "${HOME_DIR}/.kube" || true
 
 echo "INIT_OK"
 REMOTE
@@ -364,24 +468,36 @@ REMOTE
         sleep 5
     done
 
-    # Instalar Cilium CNI en Máster 1
-    log_info "  Instalando Cilium CNI v1.15.5..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s <<'REMOTE'
+    # Instalar CNI en Máster 1
+    log_info "  Instalando CNI: ${cni_plugin} v${cni_version}..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" <<'REMOTE'
 set -euo pipefail
+CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"
 export KUBECONFIG=/etc/kubernetes/admin.conf
-# Install Helm if not present
-if ! command -v helm &>/dev/null; then
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --no-sudo 2>/dev/null || true
-fi
-# Install Cilium CLI
-if ! command -v cilium &>/dev/null; then
-    CILIUM_CLI_VERSION=$(curl -fsSL https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt 2>/dev/null || echo "v0.15.8")
-    curl -fsSL --remote-name-all \
-        "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-amd64.tar.gz"
-    tar -xzf cilium-linux-amd64.tar.gz -C /usr/local/bin
-    rm -f cilium-linux-amd64.tar.gz
-fi
-cilium install --version 1.15.5 --set kubeProxyReplacement=true 2>&1 || true
+
+case "${CNI_PLUGIN}" in
+  cilium)
+    if ! command -v helm &>/dev/null; then
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --no-sudo 2>/dev/null || true
+    fi
+    if ! command -v cilium &>/dev/null; then
+        CILIUM_CLI_VERSION=$(curl -fsSL https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt 2>/dev/null || echo "v0.15.8")
+        curl -fsSL --remote-name-all \
+            "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-amd64.tar.gz"
+        tar -xzf cilium-linux-amd64.tar.gz -C /usr/local/bin
+        rm -f cilium-linux-amd64.tar.gz
+    fi
+    cilium install --version "${CNI_VERSION}" --set kubeProxyReplacement=true 2>&1 || true
+    ;;
+  calico)
+    curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/v${CNI_VERSION}/manifests/calico.yaml" | \
+        sed "s|192.168.0.0/16|${POD_CIDR}|g" | kubectl apply -f - 2>&1 || true
+    ;;
+  flannel)
+    kubectl apply -f \
+        "https://github.com/flannel-io/flannel/releases/download/v${CNI_VERSION}/kube-flannel.yml" 2>&1 || true
+    ;;
+esac
 echo "CNI_OK"
 REMOTE
 
