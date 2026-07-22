@@ -80,7 +80,7 @@ auto_reset_ha_cluster() {
     local all_nodes=("${master_ips[@]}" "${worker_ips[@]}")
 
     printf "\n"
-    printf "  ${CLR_BG_RED}${CLR_BOLD_WHITE}  ⚠️  ADVERTENCIA DE SEGURIDAD  ⚠️  ${CLR_RESET}\n"
+    printf "  ${BG_RED:-}${CLR_BOLD_WHITE}  ⚠️  ADVERTENCIA DE SEGURIDAD  ⚠️  ${CLR_RESET}\n"
     printf "  ${CLR_BOLD_RED}ESTA ACCIÓN ELIMINARÁ KUBERNETES, CILIUM, ETCD, IPTABLES Y CONFIGURACIONES${CLR_RESET}\n"
     printf "  ${CLR_BOLD_RED}EN LOS %d NODOS SIMULTÁNEAMENTE. NO HAY DESHACER.${CLR_RESET}\n\n" "${#all_nodes[@]}"
     printf "  ¿Está COMPLETAMENTE SEGURO de ejecutar el Reset total? [y/N]: "
