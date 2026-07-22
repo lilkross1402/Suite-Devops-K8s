@@ -42,23 +42,10 @@ deploy_istio_kiali() {
         log_warn "No se pudo descargar CRDs de Istio directamente desde GitHub. Asegúrese de conexión a Internet."
     }
 
-    # 2. Desplegar Kiali Operator & Kiali Server CR
-    log_info "Desplegando Kiali Operator..."
-    kubectl create namespace kiali-operator 2>/dev/null || true
-    kubectl apply -f "https://raw.githubusercontent.com/kiali/kiali-operator/master/manifests/kiali-operator.yaml" 2>/dev/null || true
-
-    log_info "Instanciando servicio Kiali Dashboard (auth: anonymous) en istio-system..."
-    sleep 5
-    cat <<EOF | kubectl apply -f - 2>/dev/null || true
-apiVersion: kiali.io/v1alpha1
-kind: Kiali
-metadata:
-  name: kiali
-  namespace: istio-system
-spec:
-  auth:
-    strategy: anonymous
-EOF
+    # 2. Desplegar Kiali Dashboard Server (Oficial Istio Addon)
+    log_info "Desplegando Kiali Dashboard Server (namespace: istio-system)..."
+    kubectl apply -f "https://raw.githubusercontent.com/istio/istio/${istio_version}/samples/addons/kiali.yaml" 2>/dev/null || \
+    kubectl apply -f "https://raw.githubusercontent.com/istio/istio/release-1.21/samples/addons/kiali.yaml"
 
     state_set ".stack.istio.installed" "true"
     state_set ".stack.istio.version" "${istio_version}"
