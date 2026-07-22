@@ -23,7 +23,11 @@ _auto_repair_rebooted_nodes() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
-    # Ajustar endpoint local directo 127.0.0.1:6443 en el Control Plane para eliminar dependencias de red VIP (0ms de latencia)
+    # Desactivar SWAP de forma inmediata y permanente (causa raíz del fallo de kubelet tras reinicio)
+    sudo swapoff -a 2>/dev/null || true
+    sudo sed -i '/swap/d' /etc/fstab 2>/dev/null || true
+
+    # Ajustar endpoint local directo 127.0.0.1:6443 en el Control Plane
     sudo sed -i 's|server: https://.*:8443|server: https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME}/.kube/config" 2>/dev/null || true
 
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
