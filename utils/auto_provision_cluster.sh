@@ -501,14 +501,18 @@ sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.t
 systemctl restart containerd
 sleep 2
 
-kubeadm init \
-    --control-plane-endpoint "${VIP}:8443" \
-    --upload-certs \
-    --pod-network-cidr="${POD_CIDR}" \
-    --service-cidr="${SVC_CIDR}" \
-    --skip-phases=addon/kube-proxy \
-    --kubernetes-version="${K8S_VER}" \
-    2>&1
+if [[ -f /etc/kubernetes/admin.conf ]]; then
+    echo "Control plane already initialized, skipping kubeadm init."
+else
+    kubeadm init \
+        --control-plane-endpoint "${VIP}:8443" \
+        --upload-certs \
+        --pod-network-cidr="${POD_CIDR}" \
+        --service-cidr="${SVC_CIDR}" \
+        --skip-phases=addon/kube-proxy \
+        --kubernetes-version="${K8S_VER}" \
+        2>&1
+fi
 
 # Setup kubeconfig for root
 mkdir -p /root/.kube
