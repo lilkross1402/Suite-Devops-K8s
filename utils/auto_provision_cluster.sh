@@ -605,7 +605,7 @@ REMOTE
     for ((i=1; i<${#master_ips[@]}; i++)); do
         local node="${master_ips[$i]}"
         log_info "  Uniendo Control Plane ${node}..."
-        _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
+        _ssh "${ssh_user}@${node}" "if [[ -f /etc/kubernetes/kubelet.conf ]]; then echo 'Node already joined, skipping kubeadm join.'; else sudo ${join_cmd} --control-plane --certificate-key ${cert_key}; fi" || true
         # kubeconfig para el usuario en CPs adicionales
         _ssh "${ssh_user}@${node}" bash -s -- "${ssh_user}" <<'REMOTE'
 set -euo pipefail
@@ -621,7 +621,7 @@ REMOTE
     log_info "  Uniendo Nodos Workers al Clúster..."
     for node in "${worker_ips[@]}"; do
         log_info "  Uniendo Worker ${node}..."
-        _ssh "${ssh_user}@${node}" "sudo ${join_cmd}" || true
+        _ssh "${ssh_user}@${node}" "if [[ -f /etc/kubernetes/kubelet.conf ]]; then echo 'Worker already joined, skipping kubeadm join.'; else sudo ${join_cmd}; fi" || true
     done
 
     printf "\n"
