@@ -680,29 +680,9 @@ cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
 chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh >/dev/null || true
 
-# Persistencia de enrutamiento VIP ante reinicios del Control Plane
-if ! nc -z -w 3 "${VIP}" 8443 2>/dev/null; then
-    ip addr add "${VIP}/32" dev lo 2>/dev/null || true
-    iptables -t nat -C OUTPUT -p tcp -d "${VIP}" --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || \
-    iptables -t nat -A OUTPUT -p tcp -d "${VIP}" --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || true
-
-    cat > /etc/systemd/system/kubeops-vip-route.service <<EOF
-[Unit]
-Description=KubeOps VIP Route Persistence for Control Plane HA
-Before=kubelet.service
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c '/sbin/ip addr add ${VIP}/32 dev lo 2>/dev/null || true; /sbin/iptables -t nat -C OUTPUT -p tcp -d ${VIP} --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || /sbin/iptables -t nat -A OUTPUT -p tcp -d ${VIP} --dport 8443 -j REDIRECT --to-ports 6443'
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable --now kubeops-vip-route.service 2>/dev/null || true
-fi
+# Apuntar kubelet y kubectl localmente a 127.0.0.1:6443 en cada nodo del Control Plane
+sed -i 's|server: https://.*:8443|server: https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME_DIR}/.kube/config" 2>/dev/null || true
+systemctl restart kubelet 2>/dev/null || true
 REMOTE
     done
 

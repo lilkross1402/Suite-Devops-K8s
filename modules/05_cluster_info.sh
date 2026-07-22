@@ -23,10 +23,8 @@ _auto_repair_rebooted_nodes() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
-    # Asignar la VIP de forma local en lo y redirigir el puerto 8443 al 6443 (0ms de latencia)
-    sudo ip addr add 172.31.36.100/32 dev lo 2>/dev/null || true
-    sudo iptables -t nat -C OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || \
-    sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || true
+    # Ajustar endpoint local directo 127.0.0.1:6443 en el Control Plane para eliminar dependencias de red VIP (0ms de latencia)
+    sudo sed -i 's|server: https://.*:8443|server: https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME}/.kube/config" 2>/dev/null || true
 
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         local not_ready_nodes
