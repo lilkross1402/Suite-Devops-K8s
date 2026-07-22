@@ -192,10 +192,11 @@ EOF
             "name": "docker-airgap",
             "online": true,
             "storage": { "blobStoreName": "default", "strictContentTypeValidation": true },
-            "proxy": { "remoteUrl": "http://localhost:8082" },
+            "proxy": { "remoteUrl": "http://localhost:8082", "contentMaxAge": 1440, "metadataMaxAge": 1440 },
             "negativeCache": { "enabled": true, "timeToLive": 1440 },
             "httpClient": { "blocked": false, "autoBlock": true },
-            "docker": { "v1Enabled": true, "forceBasicAuth": false }
+            "docker": { "v1Enabled": true, "forceBasicAuth": false },
+            "dockerProxy": { "indexType": "HUB" }
         }' "http://localhost:8081/service/rest/v1/repositories/docker/proxy" 2>/dev/null || true
 
     log_info "Verificando respuesta del Registro Air-Gap en puerto ${docker_port}..."
