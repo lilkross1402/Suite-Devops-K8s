@@ -586,8 +586,18 @@ systemctl restart containerd 2>/dev/null || true
 sleep 2
 
 if [[ -f /etc/kubernetes/admin.conf ]]; then
-    echo "Control plane already initialized, skipping kubeadm init."
-else
+    if ! kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf &>/dev/null; then
+        echo "Stale or unresponsive control plane detected on Master 1. Performing clean reset..."
+        kubeadm reset -f 2>/dev/null || true
+        rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /var/lib/etcd /etc/cni/net.d
+        systemctl restart containerd 2>/dev/null || true
+        sleep 2
+    else
+        echo "Control plane active and responding, skipping kubeadm init."
+    fi
+fi
+
+if [[ ! -f /etc/kubernetes/admin.conf ]]; then
     kubeadm init \
         --control-plane-endpoint "${VIP}:8443" \
         --upload-certs \
@@ -694,22 +704,22 @@ REMOTE
         log_info "  Verificando Control Plane ${node}..."
         if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
             log_info "  Uniendo Control Plane ${node} al clúster..."
-            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d"
+            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
         else
             log_info "  Control Plane ${node} ya está unido activamente."
         fi
 
         # kubeconfig para el usuario en CPs adicionales
-        _ssh "${ssh_user}@${node}" bash -s -- "${ssh_user}" <<'REMOTE'
+        _ssh "${ssh_user}@${node}" sudo bash -s -- "${ssh_user}" <<'REMOTE'
 set -euo pipefail
 U="${1}"
 HOME_DIR=$(eval echo "~${U}")
 mkdir -p "${HOME_DIR}/.kube" /root/.kube
-sudo cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" 2>/dev/null || true
-sudo cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
-sudo chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
-echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | sudo tee /etc/profile.d/k8s.sh >/dev/null || true
+cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" 2>/dev/null || true
+cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
+chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
+echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh >/dev/null || true
 REMOTE
     done
 
@@ -719,7 +729,7 @@ REMOTE
         log_info "  Verificando Worker ${node}..."
         if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
             log_info "  Uniendo Worker ${node} al clúster..."
-            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d"
+            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             _ssh "${ssh_user}@${node}" "sudo ${join_cmd}" || true
         else
             log_info "  Worker ${node} ya está unido activamente."
