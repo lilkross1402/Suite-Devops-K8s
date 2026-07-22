@@ -305,6 +305,36 @@ auto_provision_ha_cluster() {
         SSH_OPTS+=("-i" "${ssh_key}")
     fi
 
+    # ── WIZARD: Modo de Despliegue (Online vs Air-Gap) ───────────────────────
+    local deploy_mode="online"
+    local nexus_host=""
+    local nexus_docker_port="8082"
+    local prov_nexus="N"
+
+    printf "\n"
+    printf "  ══════════════════════════════════════════════════════════════\n"
+    printf "  ${CLR_BOLD_WHITE}Selección de Entorno de Despliegue${CLR_RESET}\n"
+    printf "  ══════════════════════════════════════════════════════════════\n\n"
+    printf "  ${CLR_BOLD_WHITE}[0] Seleccione el modo de red del clúster:${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[1]${CLR_RESET} ONLINE (Con acceso a Internet) ${CLR_BOLD_GREEN}(Predeterminado)${CLR_RESET}\n"
+    printf "  ${CLR_CYAN}[2]${CLR_RESET} AIR-GAP (Sin Internet / Repositorio Privado Nexus 3)\n"
+    printf "  ${CLR_BOLD_WHITE}Selección [1]: ${CLR_RESET}"
+    read -r net_choice
+    if [[ "${net_choice}" == "2" ]]; then
+        deploy_mode="airgap"
+        log_info "Modo AIR-GAP seleccionado (Sin Internet)."
+        
+        printf "  ¿Desea aprovisionar el Servidor Nexus 3 vía SSH antes de instalar el clúster? [y/N]: "
+        read -r prov_nexus
+        if [[ "${prov_nexus}" =~ ^[yY]$ ]]; then
+            printf "  Ingrese la IP del Servidor Nexus 3 (ej. 172.31.46.152 o 3.144.166.168): "
+            read -r nexus_host
+        else
+            printf "  Ingrese la IP/URL del Registro Docker Nexus ya activo (ej. 172.31.46.152:8082): "
+            read -r nexus_host
+        fi
+    fi
+
     # ── WIZARD: Versiones y Plugin CNI ─────────────────────────────────────
     local k8s_version="1.29"
     local k8s_version_full="1.29.15"
@@ -405,6 +435,13 @@ auto_provision_ha_cluster() {
     local master2_ip="${master_ips[1]:-}"
     local master3_ip="${master_ips[2]:-}"
 
+    # ── PASO 0/6: Aprovisionar Servidor Nexus 3 (Opcional Air-Gap) ───────────
+    if [[ -n "${nexus_host}" && "${prov_nexus:-}" =~ ^[yY]$ ]]; then
+        log_info "[Paso 0/6] Aprovisionando Servidor Nexus 3 Air-Gap Mirror en ${nexus_host}..."
+        _ssh "${ssh_user}@${nexus_host}" "cd /home/${ssh_user}/kubeops-suite 2>/dev/null || cd /root/kubeops-suite 2>/dev/null || true; git fetch origin && git reset --hard origin/main && chmod +x kubeops.sh modules/*.sh stack/*.sh lib/*.sh utils/*.sh && sudo ./utils/setup_nexus_repository.sh" || true
+        log_success "Servidor Nexus 3 cargado con las imágenes del clúster en ${nexus_host}:${nexus_docker_port}."
+    fi
+
     # ── PASO 1/6: Verificar SSH ──────────────────────────────────────────────
     log_info "[Paso 1/6] Verificando conectividad SSH contra los ${#master_ips[@]} Másters y ${#worker_ips[@]} Workers..."
     local all_nodes=("${master_ips[@]}" "${worker_ips[@]}")
@@ -498,11 +535,28 @@ REMOTE
     done
 
     # Instalar CNI en Máster 1
-    log_info "  Instalando CNI: ${cni_plugin} v${cni_version}..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" <<'REMOTE'
+    log_info "  Instalando CNI: ${cni_plugin} v${cni_version} (Modo: ${deploy_mode})..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" "${deploy_mode}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
 set -euo pipefail
-CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"
+CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"; MODE="${4:-online}"; NEXUS_IP="${5:-}"; NEXUS_PORT="${6:-8082}"
 export KUBECONFIG=/etc/kubernetes/admin.conf
+
+if [[ "${MODE}" == "airgap" ]]; then
+    log_info "Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
+    OFFLINE_MANIFEST=$(find /home/${SUDO_USER:-ubuntu}/kubeops-suite/offline-assets /root/kubeops-suite/offline-assets -name "${CNI_PLUGIN}*.yaml" -o -name "calico.yaml" -o -name "kube-flannel.yml" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${OFFLINE_MANIFEST}" && -f "${OFFLINE_MANIFEST}" ]]; then
+        if [[ -n "${NEXUS_IP}" ]]; then
+            sed "s|quay.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|docker.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|registry.k8s.io|${NEXUS_IP}:${NEXUS_PORT}|g" \
+                "${OFFLINE_MANIFEST}" > /tmp/cni-airgap.yaml
+            kubectl apply -f /tmp/cni-airgap.yaml
+            rm -f /tmp/cni-airgap.yaml
+        else
+            kubectl apply -f "${OFFLINE_MANIFEST}"
+        fi
+        echo "CNI_AIRGAP_OK"
+        exit 0
+    fi
+fi
 
 case "${CNI_PLUGIN}" in
   cilium)
