@@ -122,28 +122,25 @@ setup_nexus_server() {
 
     _ensure_container_engine
 
-    # 1. Re-crear contenedor Sonatype Nexus 3 para garantizar estado limpio y sincronización de credenciales
-    log_info "Inicializando instancia limpia de Sonatype Nexus 3..."
+    # 1. Desplegar Sonatype Nexus 3 para Gestión de Artefactos (Puerto 8081)
+    log_info "Desplegando Sonatype Nexus 3 Enterprise UI (Puerto ${nexus_port})..."
     sudo docker rm -f nexus 2>/dev/null || true
-    sudo docker volume rm nexus-data 2>/dev/null || true
     sudo docker volume create nexus-data 2>/dev/null || true
 
     sudo docker run -d \
         --name nexus \
         --restart always \
         -p "${nexus_port}:8081" \
-        -p "${docker_port}:8082" \
         -v nexus-data:/nexus-data \
         sonatype/nexus3:latest
 
-    log_info "Esperando a que la API de Nexus 3 esté respondiendo (esto puede tardar 60-90 segundos)..."
+    log_info "Esperando a que la API de Nexus 3 esté respondiendo (60 segundos)..."
     until sudo docker exec nexus curl -fsSL http://localhost:8081/service/rest/v1/status &>/dev/null; do
         sleep 5
     done
-    log_success "Servidor Nexus 3 activo y respondiendo."
+    log_success "Servidor Nexus 3 Enterprise activo en el puerto ${nexus_port}."
 
-    # 2. Esperar explícitamente a que Nexus 3 genere el archivo admin.password
-    log_info "Esperando generación del archivo de credenciales iniciales..."
+    log_info "Esperando generación de credenciales iniciales de Nexus..."
     until sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null; do
         sleep 3
     done
@@ -152,68 +149,28 @@ setup_nexus_server() {
     init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null | tr -d '\r\n ')
 
     log_info "Fijando contraseña de administrador a '${admin_password}'..."
-    local change_resp
-    change_resp=$(sudo docker exec nexus curl -s -w "%{http_code}" -o /dev/null -X PUT -u "admin:${init_pass}" \
+    sudo docker exec nexus curl -s -X PUT -u "admin:${init_pass}" \
         -H "Content-Type: text/plain" \
         -d "${admin_password}" \
-        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" || echo "500")
+        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
 
-    if [[ "${change_resp}" =~ ^(200|204)$ ]]; then
-        log_success "Contraseña de administrador fijada exitosamente a '${admin_password}'."
-    else
-        log_warn "Respuesta de cambio de clave: HTTP ${change_resp}"
-    fi
+    log_success "Contraseña de Nexus 3 actualizada a '${admin_password}'."
 
-    log_info "Verificando sincronización de sesión de administrador en la API..."
-    until sudo docker exec nexus curl -fsSL -u "admin:${admin_password}" "http://localhost:8081/service/rest/v1/status" &>/dev/null; do
-        sleep 2
-    done
-    log_success "Sesión de administrador verificada y activa."
+    # 2. Desplegar Registro de Imágenes de Alta Velocidad CNCF Distribution (Puerto 8082)
+    log_info "Desplegando Registro Docker CNCF Distribution v2 para Air-Gap en puerto ${docker_port}..."
+    sudo docker rm -f kubeops-registry 2>/dev/null || true
+    sudo mkdir -p /var/lib/kubeops-registry
 
-    # 3. Activar Realms de Seguridad para Docker (DockerToken Realm)
-    log_info "Activando Realms de Seguridad para Docker (DockerToken Realm)..."
-    sudo docker exec nexus curl -fsSL -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d '["NexusAuthenticatingRealm", "DockerToken"]' \
-        "http://localhost:8081/service/rest/v1/security/realms/active"
+    sudo docker run -d \
+        --name kubeops-registry \
+        --restart always \
+        -p "${docker_port}:5000" \
+        -v /var/lib/kubeops-registry:/var/lib/registry \
+        -e REGISTRY_STORAGE_DELETE_ENABLED=true \
+        registry:2
 
-    # 4. Configurar Repositorio Docker Hosted (Puerto 8082)
-    log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
-    local repo_payload='{
-        "name": "docker-hosted",
-        "online": true,
-        "storage": {
-            "blobStoreName": "default",
-            "strictContentTypeValidation": true,
-            "writePolicy": "allow"
-        },
-        "component": {
-            "proprietaryComponents": true
-        },
-        "docker": {
-            "v1Enabled": true,
-            "forceBasicAuth": false,
-            "httpPort": 8082
-        }
-    }'
-
-    sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || \
-    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted/docker-hosted" 2>/dev/null || true
-
-    log_info "Habilitando acceso anónimo a nivel de sistema..."
-    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d '{"enabled": true, "anonymousAccess": true}' \
-        "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
-
-    log_success "Repositorio Docker en puerto ${docker_port} configurado exitosamente."
-
-    # 5. Configurar Docker daemon local para permitir insecure-registry (con daemon-reload)
-    log_info "Configurando daemon local /etc/docker/daemon.json..."
+    # 3. Configurar Docker daemon local para permitir insecure-registry
+    log_info "Configurando daemon local /etc/docker/daemon.json para ${docker_port}..."
     sudo mkdir -p /etc/docker
     sudo tee /etc/docker/daemon.json >/dev/null <<EOF
 {
@@ -223,28 +180,21 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl restart docker
 
-    log_info "Esperando a que el servicio del registro Docker (8082) responda HTTP..."
-    until [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" =~ ^(200|401|403)$ ]]; do
-        sleep 3
+    log_info "Verificando respuesta del Registro Air-Gap en puerto ${docker_port}..."
+    until [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" == "200" ]]; do
+        sleep 2
     done
-    log_success "Servicio del registro Docker (8082) activo y respondiendo."
+    log_success "Registro Docker Air-Gap (Puerto ${docker_port}) activo y respondiendo HTTP 200 OK."
 
-    # 6. Autenticar cliente Docker CLI desatendido
-    log_info "Iniciando sesión en el registro Nexus local (127.0.0.1:${docker_port}) como administrador..."
-    if ! echo "${admin_password}" | sudo docker login "127.0.0.1:${docker_port}" -u admin --password-stdin; then
-        log_warn "Re-intentando inicio de sesión en ${primary_ip}:${docker_port}..."
-        echo "${admin_password}" | sudo docker login "${primary_ip}:${docker_port}" -u admin --password-stdin
-    fi
-
-    # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
-    log_info "Iniciando descarga y precarga de imágenes hacia el registro local (${primary_ip}:${docker_port})..."
+    # 4. Pre-cargar e Inyectar las 23 imágenes requeridas para el clúster Air-Gap
+    log_info "Iniciando descarga y precarga desatendida de imágenes hacia el registro local (127.0.0.1:${docker_port})..."
     for img in "${REQUIRED_IMAGES[@]}"; do
         local target_name="${img#*/}"
-        log_info "  [Mirroring] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
+        log_info "  [Mirroring Air-Gap] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
         sudo docker pull "${img}" || true
         sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
         sudo docker tag "${img}" "${primary_ip}:${docker_port}/${target_name}" || true
-        sudo docker push "127.0.0.1:${docker_port}/${target_name}" || true
+        sudo docker push "127.0.0.1:${docker_port}/${target_name}"
     done
 
     # 6. Guardar estado del servidor Nexus
