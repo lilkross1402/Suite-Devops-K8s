@@ -417,18 +417,27 @@ auto_provision_ha_cluster() {
     done
     log_success "Conectividad SSH verificada en todos los nodos."
 
-    # ── PASO 2/6: Sincronizar repo en todos los nodos ────────────────────────
-    log_info "[Paso 2/6] Sincronizando kubeops-suite en los nodos remotos..."
+    # ── PASO 2/6: Sincronizar repo en todos los nodos (En paralelo) ─────────
+    log_info "[Paso 2/6] Sincronizando kubeops-suite en los nodos remotos (en paralelo)..."
+    local pids=()
     for node in "${all_nodes[@]}"; do
-        _phase0_sync_repo "${node}"
+        _phase0_sync_repo "${node}" &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "${pid}" || true
     done
     log_success "kubeops-suite sincronizado en todos los nodos."
 
-    # ── PASO 3/6: Instalar prereqs en todos los nodos ────────────────────────
-    log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en todos los nodos..."
-    log_warn "  Este paso puede tardar 5-10 minutos por nodo..."
+    # ── PASO 3/6: Instalar prereqs en todos los nodos (En paralelo) ─────────
+    log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en paralelo en todos los nodos..."
+    pids=()
     for node in "${all_nodes[@]}"; do
-        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}"
+        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "${pid}" || true
     done
     log_success "Prerequisitos instalados en todos los nodos."
 
