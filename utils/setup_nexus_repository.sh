@@ -184,6 +184,20 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl restart docker
 
+    # 3b. Vincular Registro Air-Gap (8082) en la Interfaz Web de Nexus 3 (8081) como Proxy Visual
+    log_info "Vinculando Registro Air-Gap en la Interfaz Web de Nexus 3 (http://${public_ip}:${nexus_port})..."
+    sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "docker-airgap",
+            "online": true,
+            "storage": { "blobStoreName": "default", "strictContentTypeValidation": true },
+            "proxy": { "remoteUrl": "http://localhost:8082" },
+            "negativeCache": { "enabled": true, "timeToLive": 1440 },
+            "httpClient": { "blocked": false, "autoBlock": true },
+            "docker": { "v1Enabled": true, "forceBasicAuth": false }
+        }' "http://localhost:8081/service/rest/v1/repositories/docker/proxy" 2>/dev/null || true
+
     log_info "Verificando respuesta del Registro Air-Gap en puerto ${docker_port}..."
     until [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" == "200" ]]; do
         sleep 2
