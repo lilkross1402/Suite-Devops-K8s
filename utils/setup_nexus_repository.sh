@@ -205,23 +205,25 @@ setup_nexus_server() {
 EOF
     sudo systemctl restart docker
 
-    log_info "Esperando a que el puerto del registro Docker (8082) esté activo..."
-    until nc -z -w 3 127.0.0.1 "${docker_port}" 2>/dev/null || [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" =~ ^(200|401|403)$ ]]; do
+    log_info "Esperando a que el servicio del registro Docker (8082) responda HTTP..."
+    until [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" =~ ^(200|401|403)$ ]]; do
         sleep 3
     done
-    log_success "Puerto del registro Docker (8082) activo y respondiendo."
+    log_success "Servicio del registro Docker (8082) activo y respondiendo."
 
     log_info "Iniciando sesión en el registro Nexus local como administrador..."
-    sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || \
     sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
+    sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
     log_info "Iniciando descarga y precarga de imágenes hacia el registro local (${primary_ip}:${docker_port})..."
     for img in "${REQUIRED_IMAGES[@]}"; do
-        log_info "  [Mirroring] ${img} -> ${primary_ip}:${docker_port}/${img#*/}"
+        local target_name="${img#*/}"
+        log_info "  [Mirroring] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
         sudo docker pull "${img}" || true
-        sudo docker tag "${img}" "${primary_ip}:${docker_port}/${img#*/}" || true
-        sudo docker push "${primary_ip}:${docker_port}/${img#*/}" || true
+        sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
+        sudo docker tag "${img}" "${primary_ip}:${docker_port}/${target_name}" || true
+        sudo docker push "127.0.0.1:${docker_port}/${target_name}" || true
     done
 
     # 6. Guardar estado del servidor Nexus
