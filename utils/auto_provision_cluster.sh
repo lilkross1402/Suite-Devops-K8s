@@ -692,14 +692,41 @@ REMOTE
             
             local w_join_cmd="${join_cmd}"
             if ! _ssh "${ssh_user}@${node}" "nc -z -w 3 ${vip_ip} 8443 2>/dev/null" &>/dev/null; then
-                log_info "    Worker ${node} cruza subredes AWS VPC. Aplicando DNAT local (${vip_ip}:8443 -> ${master1_ip}:8443)..."
-                _ssh "${ssh_user}@${node}" "sudo iptables -t nat -C OUTPUT -p tcp -d ${vip_ip} --dport 8443 -j DNAT --to-destination ${master1_ip}:8443 2>/dev/null || sudo iptables -t nat -A OUTPUT -p tcp -d ${vip_ip} --dport 8443 -j DNAT --to-destination ${master1_ip}:8443 2>/dev/null" || true
+                log_info "    Worker ${node} cruza subredes AWS VPC. Aplicando servicio de persistencia DNAT reboot..."
                 w_join_cmd=$(echo "${join_cmd}" | sed "s|${vip_ip}:8443|${master1_ip}:8443|g")
             fi
             _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" || true
         else
-            log_info "  Worker ${node} ya está unido activamente."
+            log_info "  Worker ${node} ya está unido activamente. Asegurando persistencia de ruta..."
         fi
+
+        # Persistencia de ruta ante reinicios / cambios de tipo de instancia EC2
+        _ssh "${ssh_user}@${node}" sudo bash -s -- "${vip_ip}" "${master1_ip}" <<'REMOTE'
+set -euo pipefail
+VIP="${1}"; M1="${2}"
+if ! nc -z -w 3 "${VIP}" 8443 2>/dev/null; then
+    iptables -t nat -C OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination "${M1}:8443" 2>/dev/null || \
+    iptables -t nat -A OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination "${M1}:8443" 2>/dev/null || true
+
+    cat > /etc/systemd/system/kubeops-vip-route.service <<EOF
+[Unit]
+Description=KubeOps VIP Route Persistence for Cross-Subnet Cloud VPC
+Before=kubelet.service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/sbin/iptables -t nat -C OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination ${M1}:8443 2>/dev/null || /sbin/iptables -t nat -A OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination ${M1}:8443'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now kubeops-vip-route.service 2>/dev/null || true
+    systemctl restart kubelet 2>/dev/null || true
+fi
+REMOTE
     done
 
     # ── PASO 7/6: Instalar Plugin de Red (CNI) en el Clúster HA Completo ────
