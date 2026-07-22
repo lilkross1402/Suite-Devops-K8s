@@ -639,6 +639,15 @@ REMOTE
         sleep 5
     done
 
+    # Si la VIP no es alcanzable por enrutamiento entre subredes de AWS VPC, actualizar ConfigMap kubeadm-config
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${master1_ip}" <<'REMOTE'
+set -euo pipefail
+VIP="${1}"; M1="${2}"
+if ! nc -z -w 3 "${VIP}" 8443 2>/dev/null; then
+    kubectl -n kube-system get cm kubeadm-config -o yaml --kubeconfig=/etc/kubernetes/admin.conf | sed "s|${VIP}:8443|${M1}:8443|g" | kubectl apply -f - --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
+fi
+REMOTE
+
     # ── Capturar join tokens ──────────────────────────────────────────────────
     log_info "  Capturando tokens de unión desde el Máster 1..."
     local cert_key join_cmd
@@ -683,7 +692,8 @@ REMOTE
             
             local w_join_cmd="${join_cmd}"
             if ! _ssh "${ssh_user}@${node}" "nc -z -w 3 ${vip_ip} 8443 2>/dev/null" &>/dev/null; then
-                log_info "    Worker ${node} cruza subredes AWS VPC hacia VIP. Usando endpoint HA ${master1_ip}:8443..."
+                log_info "    Worker ${node} cruza subredes AWS VPC. Aplicando DNAT local (${vip_ip}:8443 -> ${master1_ip}:8443)..."
+                _ssh "${ssh_user}@${node}" "sudo iptables -t nat -C OUTPUT -p tcp -d ${vip_ip} --dport 8443 -j DNAT --to-destination ${master1_ip}:8443 2>/dev/null || sudo iptables -t nat -A OUTPUT -p tcp -d ${vip_ip} --dport 8443 -j DNAT --to-destination ${master1_ip}:8443 2>/dev/null" || true
                 w_join_cmd=$(echo "${join_cmd}" | sed "s|${vip_ip}:8443|${master1_ip}:8443|g")
             fi
             _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" || true
