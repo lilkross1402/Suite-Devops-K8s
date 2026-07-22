@@ -166,25 +166,31 @@ setup_nexus_server() {
 
     # 3. Configurar Registro Docker Hosted (Puerto 8082) y Anonymous Access
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
+    local repo_payload='{
+        "name": "docker-hosted",
+        "online": true,
+        "storage": {
+            "blobStoreName": "default",
+            "strictContentTypeValidation": true,
+            "writePolicy": "allow"
+        },
+        "component": {
+            "proprietaryComponents": true
+        },
+        "docker": {
+            "v1Enabled": false,
+            "forceBasicAuth": true,
+            "httpPort": 8082
+        }
+    }'
+
+    # Intentar POST (crear) o PUT (actualizar existente)
     sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"name\": \"docker-hosted\",
-            \"online\": true,
-            \"storage\": {
-                \"blobStoreName\": \"default\",
-                \"strictContentTypeValidation\": true,
-                \"writePolicy\": \"allow\"
-            },
-            \"component\": {
-                \"proprietaryComponents\": true
-            },
-            \"docker\": {
-                \"v1Enabled\": true,
-                \"forceBasicAuth\": false,
-                \"httpPort\": 8082
-            }
-        }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
+        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || \
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted/docker-hosted" 2>/dev/null || true
 
     log_info "Habilitando acceso anónimo a nivel de repositorio Nexus..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
@@ -250,23 +256,7 @@ EOF
 
         sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
             -H "Content-Type: application/json" \
-            -d "{
-                \"name\": \"docker-hosted\",
-                \"online\": true,
-                \"storage\": {
-                    \"blobStoreName\": \"default\",
-                    \"strictContentTypeValidation\": true,
-                    \"writePolicy\": \"allow\"
-                },
-                \"component\": {
-                    \"proprietaryComponents\": true
-                },
-                \"docker\": {
-                    \"v1Enabled\": true,
-                    \"forceBasicAuth\": false,
-                    \"httpPort\": 8082
-                }
-            }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
+            -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
 
         sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
             -H "Content-Type: application/json" \
