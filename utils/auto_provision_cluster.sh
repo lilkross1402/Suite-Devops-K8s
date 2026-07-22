@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
 # KubeOps-Suite :: utils/auto_provision_cluster.sh
-# Purpose : Single-Node Master Orchestrator (SSH Auto-Provisioner).
-#           Executes full HA Cluster deployment across all Masters & Workers from
-#           a single node via SSH with 1-Click zero-touch automation.
+# Purpose : Single-Node SSH Orchestrator for full HA Cluster provisioning.
+#           Phase 0: Clone/sync kubeops-suite on all remote nodes
+#           Phase 1: Install prerequisites (containerd, kubelet, kubeadm, kubectl)
+#           Phase 2: Deploy HAProxy + Keepalived VIP
+#           Phase 3: Init Control Plane 1 (kubeadm init)
+#           Phase 4: Join CP 2 & 3 (HA replication)
+#           Phase 5: Join Workers
 # Author  : KubeOps-Suite (Principal Platform Engineer)
 # =============================================================================
 set -euo pipefail
@@ -13,7 +17,6 @@ if [[ -z "${SUITE_ROOT:-}" ]]; then
     SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
 
-# Guard against multiple sourcing
 if [[ -n "${_AUTO_PROVISION_SH_LOADED:-}" ]]; then
     return 0
 fi
@@ -24,6 +27,204 @@ source "${SUITE_ROOT}/lib/logger.sh"
 # shellcheck disable=SC1090
 source "${SUITE_ROOT}/lib/state_manager.sh"
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_ssh() {
+    ssh "${SSH_OPTS[@]}" "$@"
+}
+
+_ssh_sudo() {
+    local node="${1}"; shift
+    _ssh "${SSH_USER}@${node}" "sudo bash -s" <<< "${*}"
+}
+
+_remote_exec() {
+    local node="${1}"; shift
+    _ssh "${SSH_USER}@${node}" "$@"
+}
+
+# Run a block of commands on a remote node as root via heredoc
+_remote_script() {
+    local node="${1}"
+    shift
+    # $@ is ignored; caller passes heredoc via stdin pipe
+    _ssh "${SSH_USER}@${node}" "sudo bash -euo pipefail"
+}
+
+# ---------------------------------------------------------------------------
+# Phase 0: Ensure kubeops-suite exists on every remote node
+# ---------------------------------------------------------------------------
+_phase0_sync_repo() {
+    local node="${1}"
+    log_info "  [${node}] Sincronizando kubeops-suite..."
+    _ssh "${SSH_USER}@${node}" bash -s <<'REMOTE'
+set -euo pipefail
+REPO_URL="https://github.com/lilkross1402/Suite-Devops-K8s.git"
+REPO_DIR="${HOME}/kubeops-suite"
+if [[ -d "${REPO_DIR}/.git" ]]; then
+    cd "${REPO_DIR}"
+    git fetch origin && git reset --hard origin/main
+else
+    rm -rf "${REPO_DIR}"
+    git clone "${REPO_URL}" "${REPO_DIR}"
+fi
+chmod +x "${REPO_DIR}/kubeops.sh" \
+         "${REPO_DIR}/modules/"*.sh \
+         "${REPO_DIR}/stack/"*.sh \
+         "${REPO_DIR}/lib/"*.sh \
+         "${REPO_DIR}/utils/"*.sh 2>/dev/null || true
+echo "SYNC_OK"
+REMOTE
+}
+
+# ---------------------------------------------------------------------------
+# Phase 1: Install container runtime + kubeadm / kubelet / kubectl
+# ---------------------------------------------------------------------------
+_phase1_install_prereqs() {
+    local node="${1}"
+    log_info "  [${node}] Instalando prerequisitos (containerd, kubeadm, kubelet, kubectl)..."
+    _ssh "${SSH_USER}@${node}" sudo bash -s <<'REMOTE'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+
+# ---- Kernel modules & sysctl ----
+cat >/etc/modules-load.d/k8s.conf <<EOF
+overlay
+br_netfilter
+EOF
+modprobe overlay 2>/dev/null || true
+modprobe br_netfilter 2>/dev/null || true
+cat >/etc/sysctl.d/k8s.conf <<EOF
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+sysctl --system -q 2>/dev/null || true
+
+# ---- Disable swap ----
+swapoff -a
+sed -i '/\sswap\s/d' /etc/fstab || true
+
+# ---- Install containerd ----
+if ! command -v containerd &>/dev/null; then
+    apt-get update -qq
+    apt-get install -y --fix-missing --no-install-recommends ca-certificates curl gnupg
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" \
+    >/etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y --fix-missing --no-install-recommends containerd.io
+fi
+
+# ---- Configure containerd with SystemdCgroup ----
+mkdir -p /etc/containerd
+containerd config default >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl enable --now containerd
+
+# ---- Install kubeadm / kubelet / kubectl ----
+if ! command -v kubeadm &>/dev/null; then
+    apt-get update -qq
+    apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | \
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
+https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /" \
+    >/etc/apt/sources.list.d/kubernetes.list
+    apt-get update -qq
+    apt-get install -y --fix-missing kubelet=1.29.15-1.1 kubeadm=1.29.15-1.1 kubectl=1.29.15-1.1
+    apt-mark hold kubelet kubeadm kubectl
+fi
+systemctl enable --now kubelet
+echo "PREREQS_OK"
+REMOTE
+}
+
+# ---------------------------------------------------------------------------
+# Phase 2: Deploy HAProxy + Keepalived on Masters
+# ---------------------------------------------------------------------------
+_phase2_deploy_vip() {
+    local node="${1}"
+    local vip="${2}"
+    local priority="${3}"
+    local m1="${4}"
+    local m2="${5}"
+    local m3="${6:-}"
+
+    log_info "  [${node}] Instalando HAProxy + Keepalived (VIP=${vip}, priority=${priority})..."
+    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${vip}" "${priority}" "${m1}" "${m2}" "${m3}" <<'REMOTE'
+set -euo pipefail
+VIP="${1}"; PRIORITY="${2}"; M1="${3}"; M2="${4}"; M3="${5:-}"
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+
+# ---- net.ipv4.ip_nonlocal_bind ----
+echo "net.ipv4.ip_nonlocal_bind = 1" >/etc/sysctl.d/99-vip.conf
+sysctl --system -q 2>/dev/null || true
+
+# ---- Install packages with --fix-missing ----
+apt-get update -qq
+apt-get install -y --fix-missing keepalived haproxy
+
+NET_IFACE=$(ip -4 route show default | awk '{print $5}' | head -1)
+
+# ---- HAProxy config ----
+cat >/etc/haproxy/haproxy.cfg <<EOF
+global
+    log /dev/log local0
+    maxconn 4000
+    daemon
+defaults
+    log     global
+    mode    tcp
+    option  dontlognull
+    timeout connect 10s
+    timeout client  1m
+    timeout server  1m
+frontend k8s-api
+    bind *:8443
+    default_backend k8s-masters
+backend k8s-masters
+    balance roundrobin
+    server master1 ${M1}:6443 check
+    server master2 ${M2}:6443 check
+EOF
+[[ -n "${M3}" ]] && echo "    server master3 ${M3}:6443 check" >>/etc/haproxy/haproxy.cfg
+systemctl enable haproxy && systemctl restart haproxy
+
+# ---- Keepalived config ----
+cat >/etc/keepalived/keepalived.conf <<EOF
+global_defs {
+    router_id LVS_K8S
+}
+vrrp_instance VI_K8S {
+    state BACKUP
+    interface ${NET_IFACE}
+    virtual_router_id 51
+    priority ${PRIORITY}
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass k8sha
+    }
+    virtual_ipaddress {
+        ${VIP}
+    }
+}
+EOF
+systemctl enable keepalived && systemctl restart keepalived
+echo "VIP_OK"
+REMOTE
+}
+
+# ---------------------------------------------------------------------------
+# Main orchestrator
+# ---------------------------------------------------------------------------
 auto_provision_ha_cluster() {
     log_banner
     log_section "Orquestador Remoto de Clúster HA (Auto-Despliegue vía SSH)"
@@ -53,10 +254,12 @@ auto_provision_ha_cluster() {
         read -r ssh_user
     fi
 
+    SSH_USER="${ssh_user}"
+
     printf "  ¿Desea especificar un archivo de clave privada SSH (.pem / id_rsa)? [y/N]: "
     read -r use_key
     if [[ "${use_key}" =~ ^[yY]$ ]]; then
-        printf "  Ingrese la ruta de la clave SSH (.pem / id_rsa): "
+        printf "  Ingrese el nombre o ruta de la clave SSH (.pem / id_rsa): "
         read -r ssh_key
         local found_key=""
         for path in "${ssh_key}" "${SUITE_ROOT}/${ssh_key}" "${HOME}/${ssh_key}" "/home/${ssh_user}/${ssh_key}" "$(pwd)/${ssh_key}"; do
@@ -65,81 +268,164 @@ auto_provision_ha_cluster() {
                 break
             fi
         done
-
         if [[ -n "${found_key}" ]]; then
             ssh_key="${found_key}"
-            sudo chmod 400 "${ssh_key}" 2>/dev/null || chmod 400 "${ssh_key}" 2>/dev/null || true
-            log_success "Clave SSH localizada y lista: ${ssh_key}"
+            chmod 400 "${ssh_key}" 2>/dev/null || true
+            log_success "Clave SSH localizada: ${ssh_key}"
         else
-            log_warn "No se encontró el archivo de clave '${ssh_key}' en la suite (${SUITE_ROOT}) ni en ${HOME}."
+            log_warn "Clave '${ssh_key}' no encontrada. Continuando con agente SSH estándar."
             ssh_key=""
         fi
     fi
 
-    local master1_ip="${master_ips[0]}"
-
-    # Construir comando base de SSH con o sin clave -i
-    local -a ssh_cmd=("ssh" "-o" "ConnectTimeout=8" "-o" "StrictHostKeyChecking=no")
+    # Build SSH opts array
+    SSH_OPTS=("-o" "ConnectTimeout=10" "-o" "StrictHostKeyChecking=no" "-o" "BatchMode=yes")
     if [[ -n "${ssh_key}" ]]; then
-        ssh_cmd+=("-i" "${ssh_key}")
+        SSH_OPTS+=("-i" "${ssh_key}")
     fi
 
-    # 1. Probar conectividad SSH contra todos los nodos
-    log_info "[Paso 1/5] Verificando conectividad SSH contra los 6 nodos..."
+    local master1_ip="${master_ips[0]}"
+    local master2_ip="${master_ips[1]:-}"
+    local master3_ip="${master_ips[2]:-}"
+
+    # ── PASO 1/6: Verificar SSH ──────────────────────────────────────────────
+    log_info "[Paso 1/6] Verificando conectividad SSH contra los ${#master_ips[@]} Másters y ${#worker_ips[@]} Workers..."
     local all_nodes=("${master_ips[@]}" "${worker_ips[@]}")
     for node in "${all_nodes[@]}"; do
-        log_info "Comprobando SSH hacia ${ssh_user}@${node}..."
-        if ! "${ssh_cmd[@]}" "${ssh_user}@${node}" "echo connected" &>/dev/null; then
-            log_error "No se pudo conectar vía SSH a ${ssh_user}@${node}."
-            log_error "Verifique que el usuario '${ssh_user}' y la clave '${ssh_key:-id_rsa}' tengan acceso."
+        log_info "  Comprobando SSH → ${ssh_user}@${node}..."
+        if ! _ssh "${ssh_user}@${node}" "echo ok" &>/dev/null; then
+            log_error "No se pudo conectar vía SSH a ${ssh_user}@${node}. Verifique usuario y clave."
             return 1
         fi
     done
-    log_success "Conectividad SSH verificada exitosamente en los 6 nodos."
+    log_success "Conectividad SSH verificada en todos los nodos."
 
-    # 2. Desplegar Virtual IP HAProxy + Keepalived en todos los Másters
-    log_info "[Paso 2/5] Desplegando Módulo Virtual IP (HAProxy + Keepalived) en todos los Másters..."
-    for node in "${master_ips[@]}"; do
-        log_info "Configurando VIP HA en ${node}..."
-        "${ssh_cmd[@]}" "${ssh_user}@${node}" "cd /home/${ssh_user}/kubeops-suite 2>/dev/null || cd /root/kubeops-suite 2>/dev/null || true; git fetch origin && git reset --hard origin/main && chmod +x kubeops.sh modules/*.sh stack/*.sh lib/*.sh utils/*.sh && sudo ./stack/deploy_haproxy_keepalived.sh" || true
+    # ── PASO 2/6: Sincronizar repo en todos los nodos ────────────────────────
+    log_info "[Paso 2/6] Sincronizando kubeops-suite en los nodos remotos..."
+    for node in "${all_nodes[@]}"; do
+        _phase0_sync_repo "${node}"
     done
-    log_success "Módulo Virtual IP HA activo en la VIP ${vip_ip}:8443."
+    log_success "kubeops-suite sincronizado en todos los nodos."
 
-    # 3. Inicializar Máster 1 Primario
-    log_info "[Paso 3/5] Inicializando Kubernetes Control Plane 1 en Máster Primario (${master1_ip})..."
-    "${ssh_cmd[@]}" "${ssh_user}@${master1_ip}" "sudo kubeadm init --control-plane-endpoint ${vip_ip}:8443 --upload-certs --skip-phases=addon/kube-proxy || true"
-    
-    # Extraer comando de join de Control Plane y Worker desde Máster 1
-    log_info "Capturando clave de certificados y tokens de unión desde el Máster 1..."
-    local cert_key
-    cert_key=$("${ssh_cmd[@]}" "${ssh_user}@${master1_ip}" "sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -n 1")
-    local join_token
-    join_token=$("${ssh_cmd[@]}" "${ssh_user}@${master1_ip}" "sudo kubeadm token create --print-join-command 2>/dev/null")
+    # ── PASO 3/6: Instalar prereqs en todos los nodos ────────────────────────
+    log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm, kubelet) en todos los nodos..."
+    log_warn "  Este paso puede tardar 5-10 minutos por nodo..."
+    for node in "${all_nodes[@]}"; do
+        _phase1_install_prereqs "${node}"
+    done
+    log_success "Prerequisitos instalados en todos los nodos."
 
-    # 4. Unir Másters Secundarios (HA Replication)
-    log_info "[Paso 4/5] Uniendo Másters Secundarios al Control Plane HA..."
+    # ── PASO 4/6: VIP HAProxy + Keepalived en Masters ────────────────────────
+    log_info "[Paso 4/6] Desplegando Virtual IP HA (HAProxy + Keepalived) en los Másters..."
+    local priorities=(102 101 100)
+    for i in "${!master_ips[@]}"; do
+        _phase2_deploy_vip "${master_ips[$i]}" "${vip_ip}" "${priorities[$i]}" \
+            "${master1_ip}" "${master2_ip}" "${master3_ip}"
+    done
+    log_success "Virtual IP ${vip_ip}:8443 activa."
+    sleep 5  # Esperar convergencia VRRP
+
+    # ── PASO 5/6: kubeadm init en Máster 1 ──────────────────────────────────
+    log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip}..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" <<'REMOTE'
+set -euo pipefail
+VIP="${1}"
+mkdir -p "${HOME}/.kube"
+
+kubeadm init \
+    --control-plane-endpoint "${VIP}:8443" \
+    --upload-certs \
+    --pod-network-cidr=10.244.0.0/16 \
+    --skip-phases=addon/kube-proxy \
+    --kubernetes-version=1.29.15 \
+    2>&1
+
+# Setup kubeconfig for root
+mkdir -p /root/.kube
+cp -f /etc/kubernetes/admin.conf /root/.kube/config
+chown root:root /root/.kube/config
+
+# Setup kubeconfig for ubuntu user
+HOME_DIR=$(eval echo "~${SUDO_USER:-ubuntu}")
+mkdir -p "${HOME_DIR}/.kube"
+cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config"
+chown -R "${SUDO_USER:-ubuntu}:${SUDO_USER:-ubuntu}" "${HOME_DIR}/.kube" || true
+
+echo "INIT_OK"
+REMOTE
+    log_success "Control Plane inicializado en ${master1_ip}."
+
+    # Esperar a que el API Server esté listo
+    log_info "  Esperando al API Server en ${master1_ip}:6443..."
+    for i in $(seq 1 30); do
+        if _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" &>/dev/null; then
+            break
+        fi
+        sleep 5
+    done
+
+    # Instalar Cilium CNI en Máster 1
+    log_info "  Instalando Cilium CNI v1.15.5..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s <<'REMOTE'
+set -euo pipefail
+export KUBECONFIG=/etc/kubernetes/admin.conf
+# Install Helm if not present
+if ! command -v helm &>/dev/null; then
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --no-sudo 2>/dev/null || true
+fi
+# Install Cilium CLI
+if ! command -v cilium &>/dev/null; then
+    CILIUM_CLI_VERSION=$(curl -fsSL https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt 2>/dev/null || echo "v0.15.8")
+    curl -fsSL --remote-name-all \
+        "https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-amd64.tar.gz"
+    tar -xzf cilium-linux-amd64.tar.gz -C /usr/local/bin
+    rm -f cilium-linux-amd64.tar.gz
+fi
+cilium install --version 1.15.5 --set kubeProxyReplacement=true 2>&1 || true
+echo "CNI_OK"
+REMOTE
+
+    # ── Capturar join tokens ──────────────────────────────────────────────────
+    log_info "  Capturando tokens de unión desde el Máster 1..."
+    local cert_key join_cmd
+    cert_key=$(_ssh "${ssh_user}@${master1_ip}" \
+        "sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1")
+    join_cmd=$(_ssh "${ssh_user}@${master1_ip}" \
+        "sudo kubeadm token create --print-join-command 2>/dev/null")
+
+    # ── PASO 6a/6: Unir Másters Secundarios ─────────────────────────────────
+    log_info "[Paso 6/6] Uniendo Másters Secundarios al Control Plane HA..."
     for ((i=1; i<${#master_ips[@]}; i++)); do
         local node="${master_ips[$i]}"
-        log_info "Uniendo Control Plane Secundario ${node}..."
-        "${ssh_cmd[@]}" "${ssh_user}@${node}" "sudo ${join_token} --control-plane --certificate-key ${cert_key} || true"
+        log_info "  Uniendo Control Plane ${node}..."
+        _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
+        # kubeconfig para el usuario en CPs adicionales
+        _ssh "${ssh_user}@${node}" bash -s -- "${ssh_user}" <<'REMOTE'
+set -euo pipefail
+U="${1}"
+HOME_DIR=$(eval echo "~${U}")
+mkdir -p "${HOME_DIR}/.kube"
+sudo cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" || true
+sudo chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
+REMOTE
     done
 
-    # 5. Unir Nodos Workers
-    log_info "[Paso 5/5] Uniendo Nodos Workers al Clúster..."
+    # ── PASO 6b/6: Unir Workers ──────────────────────────────────────────────
+    log_info "  Uniendo Nodos Workers al Clúster..."
     for node in "${worker_ips[@]}"; do
-        log_info "Uniendo Worker ${node}..."
-        "${ssh_cmd[@]}" "${ssh_user}@${node}" "sudo ${join_token} || true"
+        log_info "  Uniendo Worker ${node}..."
+        _ssh "${ssh_user}@${node}" "sudo ${join_cmd}" || true
     done
 
     printf "\n"
-    log_section "🎉 ¡AUTO-DESPLIEGUE DEL CLÚSTER HA COMPLETADO EXITOSAMENTE!"
-    printf "  ${CLR_BOLD_GREEN}Resumen de Infraestructura Aprovisionada:${CLR_RESET}\n"
+    log_section "🎉 ¡AUTO-DESPLIEGUE DEL CLÚSTER HA COMPLETADO!"
     printf "  %-30s %s\n" "Virtual IP Flotante (VIP):" "https://${vip_ip}:8443"
-    printf "  %-30s %s\n" "Nodos Control Plane (HA):" "${master_ips[*]}"
-    printf "  %-30s %s\n" "Nodos Workers de Cómputo:" "${worker_ips[*]}"
+    printf "  %-30s %s\n" "Control Plane HA (3 nodos):" "${master_ips[*]}"
+    printf "  %-30s %s\n" "Workers de Cómputo:" "${worker_ips[*]}"
     printf "\n"
-    printf "  ${CLR_BOLD_WHITE}Verificación final ejecutando 'kubectl get nodes' en el Máster 1:${CLR_RESET}\n"
-    "${ssh_cmd[@]}" "${ssh_user}@${master1_ip}" "sudo kubectl get nodes -o wide"
+    printf "  ${CLR_BOLD_WHITE}Estado del Clúster (kubectl get nodes -o wide):${CLR_RESET}\n"
+    sleep 10
+    _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes -o wide --kubeconfig=/etc/kubernetes/admin.conf" || true
     printf "\n"
 }
 
