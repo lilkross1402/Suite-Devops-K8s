@@ -507,17 +507,20 @@ export KUBECONFIG=/etc/kubernetes/admin.conf
 case "${CNI_PLUGIN}" in
   cilium)
     if ! command -v helm &>/dev/null; then
-        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --no-sudo 2>/dev/null || true
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
     fi
-    helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
-    helm repo update 2>/dev/null || true
-    CLEAN_VER="${CNI_VERSION#v}"
-    helm upgrade --install cilium cilium/cilium \
-        --version "${CLEAN_VER}" \
-        --namespace kube-system \
-        --set kubeProxyReplacement=true \
-        --set k8sServiceHost="${VIP}" \
-        --set k8sServicePort="8443" 2>&1 || true
+    if command -v helm &>/dev/null; then
+        helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
+        helm repo update cilium 2>/dev/null || true
+        CLEAN_VER="${CNI_VERSION#v}"
+        helm upgrade --install cilium cilium/cilium \
+            --version "${CLEAN_VER}" \
+            --namespace kube-system \
+            --set nodeinit.enabled=true \
+            --set ipam.mode=kubernetes 2>&1 || true
+    else
+        kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" 2>&1 || true
+    fi
     ;;
   calico)
     curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/v${CNI_VERSION}/manifests/calico.yaml" | \
