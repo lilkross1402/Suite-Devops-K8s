@@ -672,7 +672,10 @@ case "${CNI_PLUGIN}" in
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
-            --set kubeProxyReplacement=true 2>&1 || true
+            --set kubeProxyReplacement=true \
+            --set k8sServiceHost="127.0.0.1" \
+            --set k8sServicePort=6443 \
+            --kubeconfig=/etc/kubernetes/admin.conf 2>&1 || true
     else
         kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" 2>&1 || true
     fi
@@ -693,7 +696,7 @@ REMOTE
     log_info "  Capturando tokens de unión desde el Máster 1..."
     local cert_key join_cmd
     cert_key=$(_ssh "${ssh_user}@${master1_ip}" \
-        "sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -1")
+        "sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | grep -E '^[a-f0-9]{64}$' | tail -1")
     join_cmd=$(_ssh "${ssh_user}@${master1_ip}" \
         "sudo kubeadm token create --print-join-command 2>/dev/null")
 
