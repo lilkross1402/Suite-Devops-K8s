@@ -58,19 +58,20 @@ auto_provision_ha_cluster() {
     if [[ "${use_key}" =~ ^[yY]$ ]]; then
         printf "  Ingrese la ruta de la clave SSH (.pem / id_rsa): "
         read -r ssh_key
-        if [[ -n "${ssh_key}" && ! -f "${ssh_key}" ]]; then
-            log_warn "La ruta especificada '${ssh_key}' no existe localmente. Intentando ruta relativa en suite..."
-            if [[ -f "${SUITE_ROOT}/${ssh_key}" ]]; then
-                ssh_key="${SUITE_ROOT}/${ssh_key}"
-            elif [[ -f "${HOME}/${ssh_key}" ]]; then
-                ssh_key="${HOME}/${ssh_key}"
+        local found_key=""
+        for path in "${ssh_key}" "${SUITE_ROOT}/${ssh_key}" "${HOME}/${ssh_key}" "/home/${ssh_user}/${ssh_key}" "$(pwd)/${ssh_key}"; do
+            if [[ -n "${path}" && -f "${path}" ]]; then
+                found_key="${path}"
+                break
             fi
-        fi
-        if [[ -f "${ssh_key}" ]]; then
+        done
+
+        if [[ -n "${found_key}" ]]; then
+            ssh_key="${found_key}"
             sudo chmod 400 "${ssh_key}" 2>/dev/null || chmod 400 "${ssh_key}" 2>/dev/null || true
-            log_success "Utilizando clave SSH: ${ssh_key}"
+            log_success "Clave SSH localizada y lista: ${ssh_key}"
         else
-            log_warn "No se encontró el archivo de clave '${ssh_key}'. Continuando con agente/claves estándar..."
+            log_warn "No se encontró el archivo de clave '${ssh_key}' en la suite (${SUITE_ROOT}) ni en ${HOME}."
             ssh_key=""
         fi
     fi

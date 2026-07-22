@@ -54,14 +54,11 @@ KUBEOPS_NO_COLOR="${KUBEOPS_NO_COLOR:-false}"
 
 # _log_init: ensure log directory exists
 _log_init() {
-    if [[ ! -d "${KUBEOPS_LOG_DIR}" ]]; then
-        mkdir -p "${KUBEOPS_LOG_DIR}" 2>/dev/null || {
-            # Fallback to home directory if /var/log is not writable
-            KUBEOPS_LOG_DIR="${HOME}/.kubeops/logs"
-            KUBEOPS_LOG_FILE="${KUBEOPS_LOG_DIR}/kubeops-$(date +%Y%m%d).log"
-            mkdir -p "${KUBEOPS_LOG_DIR}"
-        }
+    if [[ ! -w "${KUBEOPS_LOG_DIR}" || (! -w "${KUBEOPS_LOG_FILE}" && -e "${KUBEOPS_LOG_FILE}") ]]; then
+        KUBEOPS_LOG_DIR="${HOME}/.kubeops/logs"
+        KUBEOPS_LOG_FILE="${KUBEOPS_LOG_DIR}/kubeops-$(date +%Y%m%d).log"
     fi
+    mkdir -p "${KUBEOPS_LOG_DIR}" 2>/dev/null || true
 }
 
 # _log_level_num LEVEL: returns numeric priority for a log level string
