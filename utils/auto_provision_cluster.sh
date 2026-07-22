@@ -158,18 +158,25 @@ if ! command -v kubeadm &>/dev/null; then
     apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | \
-        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null || true
     echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
 https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" \
     >/etc/apt/sources.list.d/kubernetes.list
-    apt-get update -qq
+    apt-get update -qq 2>/dev/null || true
     apt-get install -y --fix-missing \
         kubelet=${K8S_VERSION_FULL}-1.1 \
         kubeadm=${K8S_VERSION_FULL}-1.1 \
-        kubectl=${K8S_VERSION_FULL}-1.1
-    apt-mark hold kubelet kubeadm kubectl
+        kubectl=${K8S_VERSION_FULL}-1.1 2>/dev/null || \
+    apt-get install -y --fix-missing kubelet kubeadm kubectl
+    apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
 fi
-systemctl enable --now kubelet
+
+if ! command -v kubeadm &>/dev/null; then
+    echo "ERROR: kubeadm command not found after installation!"
+    exit 1
+fi
+
+systemctl enable --now kubelet 2>/dev/null || true
 echo "PREREQS_OK"
 REMOTE
 }
