@@ -91,22 +91,22 @@ _phase1_install_prereqs() {
 set -euo pipefail
 K8S_VERSION="${1:-1.29}"
 K8S_VERSION_FULL="${2:-1.29.15}"
-export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
-# ---- Wait for dpkg lock ----
-systemctl stop unattended-upgrades 2>/dev/null || true
-pkill -f unattended-upgrade 2>/dev/null || true
-while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
-    sleep 2
-done
+# 1. OS Detection
+OS_ID="ubuntu"
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="${ID:-ubuntu}"
+fi
 
-# ---- Kernel modules & sysctl ----
+# 2. Kernel modules & sysctl
 cat >/etc/modules-load.d/k8s.conf <<EOF
 overlay
 br_netfilter
 EOF
 modprobe overlay 2>/dev/null || true
 modprobe br_netfilter 2>/dev/null || true
+
 cat >/etc/sysctl.d/k8s.conf <<EOF
 net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
@@ -114,30 +114,74 @@ net.ipv4.ip_forward                 = 1
 EOF
 sysctl --system -q 2>/dev/null || true
 
-# ---- Disable swap ----
-swapoff -a
+# 3. Disable swap
+swapoff -a 2>/dev/null || true
 sed -i '/\sswap\s/d' /etc/fstab || true
 
-# ---- Install storage drivers (open-iscsi, nfs-common) ----
-apt-get update -qq 2>/dev/null || true
-apt-get install -y --fix-missing --no-install-recommends open-iscsi nfs-common jq 2>/dev/null || true
-systemctl enable --now iscsid 2>/dev/null || true
+# 4. OS Family Package & Repository Setup
+case "${OS_ID}" in
+    ubuntu|debian|mint|pop)
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+        systemctl stop unattended-upgrades 2>/dev/null || true
+        pkill -f unattended-upgrade 2>/dev/null || true
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+            sleep 2
+        done
 
-# ---- Install containerd ----
-if ! command -v containerd &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y --fix-missing --no-install-recommends ca-certificates curl gnupg
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" \
-    >/etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y --fix-missing --no-install-recommends containerd.io
-fi
+        apt-get update -qq 2>/dev/null || true
+        apt-get install -y --fix-missing --no-install-recommends open-iscsi nfs-common jq curl ca-certificates apt-transport-https 2>/dev/null || true
 
-# ---- Configure containerd with SystemdCgroup & enable CRI plugin ----
+        if ! command -v containerd &>/dev/null; then
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc 2>/dev/null || true
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" > /etc/apt/sources.list.d/docker.list 2>/dev/null || true
+            apt-get update -qq 2>/dev/null || true
+            apt-get install -y --fix-missing containerd.io || apt-get install -y containerd 2>/dev/null || true
+        fi
+
+        if ! command -v kubeadm &>/dev/null; then
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" -o /etc/apt/keyrings/kubernetes-apt-keyring.asc 2>/dev/null || true
+            echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+            apt-get update -qq 2>/dev/null || true
+            apt-get install -y --fix-missing kubelet kubeadm kubectl 2>/dev/null || true
+            apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
+        fi
+        ;;
+
+    rhel|rocky|centos|almalinux|fedora|ol)
+        PKG_MGR="dnf"
+        command -v dnf &>/dev/null || PKG_MGR="yum"
+
+        setenforce 0 2>/dev/null || true
+        sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
+
+        ${PKG_MGR} install -y iscsi-initiator-utils nfs-utils jq curl tar ca-certificates 2>/dev/null || true
+
+        if ! command -v containerd &>/dev/null; then
+            ${PKG_MGR} install -y containerd.io || ${PKG_MGR} install -y containerd 2>/dev/null || true
+        fi
+
+        if ! command -v kubeadm &>/dev/null; then
+            cat >/etc/yum.repos.d/kubernetes.repo <<EOF
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/rpm/repodata/repomd.xml.key
+EOF
+            ${PKG_MGR} install -y kubelet kubeadm kubectl 2>/dev/null || true
+        fi
+        ;;
+
+    *)
+        apt-get update -qq 2>/dev/null || true
+        apt-get install -y --fix-missing kubelet kubeadm kubectl containerd 2>/dev/null || true
+        ;;
+esac
+
+# 5. Configure containerd with SystemdCgroup & enable CRI plugin
 mkdir -p /etc/containerd
 containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' >/etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
@@ -149,28 +193,18 @@ timeout: 10
 debug: false
 EOF
 
+systemctl enable --now iscsid 2>/dev/null || true
 systemctl restart containerd 2>/dev/null || true
 systemctl enable --now containerd 2>/dev/null || true
+systemctl enable --now kubelet 2>/dev/null || true
 
-# ---- Install kubeadm / kubelet / kubectl ----
-if ! command -v kubeadm &>/dev/null; then
-    apt-get update -qq 2>/dev/null || true
-    apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https 2>/dev/null || true
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" -o /etc/apt/keyrings/kubernetes-apt-keyring.asc 2>/dev/null || true
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" >/etc/apt/sources.list.d/kubernetes.list
-    apt-get update -qq 2>/dev/null || true
-    apt-get install -y --fix-missing kubelet kubeadm kubectl 2>/dev/null || true
-    apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
-fi
-
-if ! command -v kubeadm &>/dev/null; then
-    echo "ERROR: kubeadm command not found after installation!"
+# 6. Verification
+if command -v kubeadm &>/dev/null && command -v containerd &>/dev/null; then
+    echo "PREREQS_OK"
+else
+    echo "ERROR: Missing kubeadm or containerd after installation"
     exit 1
 fi
-
-systemctl enable --now kubelet 2>/dev/null || true
-echo "PREREQS_OK"
 REMOTE
 }
 
