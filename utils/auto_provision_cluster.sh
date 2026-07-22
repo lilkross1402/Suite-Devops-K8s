@@ -130,10 +130,19 @@ https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_
     apt-get install -y --fix-missing --no-install-recommends containerd.io
 fi
 
-# ---- Configure containerd with SystemdCgroup ----
+# ---- Configure containerd with SystemdCgroup & enable CRI plugin ----
 mkdir -p /etc/containerd
-containerd config default >/etc/containerd/config.toml
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+
+cat >/etc/crictl.yaml <<EOF
+runtime-endpoint: unix:///var/run/containerd/containerd.sock
+image-endpoint: unix:///var/run/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
+
+systemctl restart containerd
 systemctl enable --now containerd
 
 # ---- Install kubeadm / kubelet / kubectl ----
@@ -439,6 +448,12 @@ auto_provision_ha_cluster() {
 set -euo pipefail
 VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"
 mkdir -p "${HOME}/.kube"
+
+# Ensure containerd CRI plugin is active
+sed -i 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' /etc/containerd/config.toml 2>/dev/null || true
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml 2>/dev/null || true
+systemctl restart containerd
+sleep 2
 
 kubeadm init \
     --control-plane-endpoint "${VIP}:8443" \
