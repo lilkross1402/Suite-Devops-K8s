@@ -770,9 +770,10 @@ REMOTE
     printf "  %-30s %s\n" "Workers de Cómputo:" "${worker_ips[*]}"
     printf "\n"
     printf "  ${CLR_BOLD_WHITE}Estado del Clúster (kubectl get nodes -o wide):${CLR_RESET}\n"
-    sleep 10
+    sleep 5
     _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes -o wide --kubeconfig=/etc/kubernetes/admin.conf" || true
     printf "\n"
+    read -rp "  Presione [Enter] para volver al menú principal..." dummy
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
