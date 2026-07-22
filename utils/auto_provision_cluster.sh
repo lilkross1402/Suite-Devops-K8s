@@ -708,9 +708,10 @@ REMOTE
 set -euo pipefail
 CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"; MODE="${4:-online}"; NEXUS_IP="${5:-}"; NEXUS_PORT="${6:-8082}"
 
-# Direct local kubeconfig to 127.0.0.1:6443 to bypass load-balancer during CNI bootstrap
+# Direct local kubeconfig using Master 1 IP (which matches TLS cert SANs)
+M1_IP=$(hostname -I | awk '{print $1}')
 cp -f /etc/kubernetes/admin.conf /tmp/admin-local.conf
-sed -i 's|https://.*:8443|https://127.0.0.1:6443|g' /tmp/admin-local.conf
+sed -i "s|https://.*:8443|https://${M1_IP}:6443|g" /tmp/admin-local.conf
 export KUBECONFIG=/tmp/admin-local.conf
 
 if [[ "${MODE}" == "airgap" ]]; then
@@ -743,7 +744,7 @@ case "${CNI_PLUGIN}" in
             --version "${CLEAN_VER}" \
             --namespace kube-system \
             --set kubeProxyReplacement=true \
-            --set k8sServiceHost="127.0.0.1" \
+            --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
     else
