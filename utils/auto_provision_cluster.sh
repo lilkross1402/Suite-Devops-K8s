@@ -223,22 +223,43 @@ _phase2_deploy_vip() {
     _ssh "${SSH_USER}@${node}" sudo bash -s -- "${vip}" "${priority}" "${m1}" "${m2}" "${m3}" <<'REMOTE'
 set -euo pipefail
 VIP="${1}"; PRIORITY="${2}"; M1="${3}"; M2="${4}"; M3="${5:-}"
-export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+# 1. OS Detection
+OS_ID="ubuntu"
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="${ID:-ubuntu}"
+fi
 
-# ---- Wait for dpkg lock ----
-systemctl stop unattended-upgrades 2>/dev/null || true
-pkill -f unattended-upgrade 2>/dev/null || true
-while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
-    sleep 2
-done
-
-# ---- net.ipv4.ip_nonlocal_bind ----
+# 2. net.ipv4.ip_nonlocal_bind
 echo "net.ipv4.ip_nonlocal_bind = 1" >/etc/sysctl.d/99-vip.conf
 sysctl --system -q 2>/dev/null || true
 
-# ---- Install packages with --fix-missing ----
-apt-get update -qq
-apt-get install -y --fix-missing keepalived haproxy
+# 3. Package installation with OS Detection & Retry loop
+case "${OS_ID}" in
+    ubuntu|debian|mint|pop)
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+        systemctl stop unattended-upgrades 2>/dev/null || true
+        pkill -f unattended-upgrade 2>/dev/null || true
+        
+        retry=0
+        while [ $retry -lt 15 ]; do
+            if apt-get update -qq 2>/dev/null && apt-get install -y --fix-missing keepalived haproxy 2>/dev/null; then
+                break
+            fi
+            sleep 3
+            retry=$((retry+1))
+        done
+        ;;
+    rhel|rocky|centos|almalinux|fedora|ol)
+        PKG_MGR="dnf"
+        command -v dnf &>/dev/null || PKG_MGR="yum"
+        ${PKG_MGR} install -y keepalived haproxy 2>/dev/null || true
+        ;;
+    *)
+        apt-get update -qq 2>/dev/null || true
+        apt-get install -y --fix-missing keepalived haproxy 2>/dev/null || true
+        ;;
+esac
 
 NET_IFACE=$(ip -4 route show default | awk '{print $5}' | head -1)
 
