@@ -164,12 +164,18 @@ setup_nexus_server() {
         log_warn "Respuesta de cambio de clave: HTTP ${change_resp}"
     fi
 
-    # 3. Activar Realms de Seguridad (NexusAuthenticatingRealm + DockerToken)
-    log_info "Activando Realms de Seguridad para Docker..."
+    log_info "Verificando sincronización de sesión de administrador en la API..."
+    until sudo docker exec nexus curl -fsSL -u "admin:${admin_password}" "http://localhost:8081/service/rest/v1/status" &>/dev/null; do
+        sleep 2
+    done
+    log_success "Sesión de administrador verificada y activa."
+
+    # 3. Activar Realms de Seguridad para Docker (DockerToken Realm)
+    log_info "Activando Realms de Seguridad para Docker (DockerToken Realm)..."
     sudo docker exec nexus curl -fsSL -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
         -d '["NexusAuthenticatingRealm", "DockerToken"]' \
-        "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
+        "http://localhost:8081/service/rest/v1/security/realms/active"
 
     # 4. Configurar Repositorio Docker Hosted (Puerto 8082) con Autenticación Básica Forzada
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
@@ -206,14 +212,15 @@ setup_nexus_server() {
 
     log_success "Repositorio Docker en puerto ${docker_port} configurado exitosamente."
 
-    # 5. Configurar Docker daemon local para permitir insecure-registry
+    # 5. Configurar Docker daemon local para permitir insecure-registry (con daemon-reload)
     log_info "Configurando daemon local /etc/docker/daemon.json..."
     sudo mkdir -p /etc/docker
     sudo tee /etc/docker/daemon.json >/dev/null <<EOF
 {
-  "insecure-registries": ["${primary_ip}:${docker_port}", "127.0.0.1:${docker_port}", "localhost:${docker_port}"]
+  "insecure-registries": ["${primary_ip}:${docker_port}", "127.0.0.1:${docker_port}", "localhost:${docker_port}", "${public_ip}:${docker_port}"]
 }
 EOF
+    sudo systemctl daemon-reload
     sudo systemctl restart docker
 
     log_info "Esperando a que el servicio del registro Docker (8082) responda HTTP..."
