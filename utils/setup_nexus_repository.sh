@@ -149,13 +149,20 @@ setup_nexus_server() {
     done
 
     local init_pass
-    init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password)
+    init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null | tr -d '\r\n ')
 
     log_info "Fijando contraseña de administrador a '${admin_password}'..."
-    sudo docker exec nexus curl -fsSL -X PUT -u "admin:${init_pass}" \
+    local change_resp
+    change_resp=$(sudo docker exec nexus curl -s -w "%{http_code}" -o /dev/null -X PUT -u "admin:${init_pass}" \
         -H "Content-Type: text/plain" \
         -d "${admin_password}" \
-        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" || echo "500")
+
+    if [[ "${change_resp}" =~ ^(200|204)$ ]]; then
+        log_success "Contraseña de administrador fijada exitosamente a '${admin_password}'."
+    else
+        log_warn "Respuesta de cambio de clave: HTTP ${change_resp}"
+    fi
 
     # 3. Activar Realms de Seguridad (NexusAuthenticatingRealm + DockerToken)
     log_info "Activando Realms de Seguridad para Docker..."
