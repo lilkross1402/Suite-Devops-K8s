@@ -669,16 +669,39 @@ REMOTE
             log_info "  Control Plane ${node} ya está unido activamente."
         fi
 
-        # kubeconfig para el usuario en CPs adicionales
-        _ssh "${ssh_user}@${node}" sudo bash -s -- "${ssh_user}" <<'REMOTE'
+        # kubeconfig para el usuario en CPs adicionales y persistencia de ruta VIP
+        _ssh "${ssh_user}@${node}" sudo bash -s -- "${ssh_user}" "${vip_ip}" "${master1_ip}" <<'REMOTE'
 set -euo pipefail
-U="${1}"
+U="${1}"; VIP="${2}"; M1="${3}"
 HOME_DIR=$(eval echo "~${U}")
 mkdir -p "${HOME_DIR}/.kube" /root/.kube
 cp -f /etc/kubernetes/admin.conf "${HOME_DIR}/.kube/config" 2>/dev/null || true
 cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
 chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh >/dev/null || true
+
+# Persistencia de enrutamiento VIP ante reinicios del Control Plane
+if ! nc -z -w 3 "${VIP}" 8443 2>/dev/null; then
+    iptables -t nat -C OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || \
+    iptables -t nat -A OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || true
+
+    cat > /etc/systemd/system/kubeops-vip-route.service <<EOF
+[Unit]
+Description=KubeOps VIP Route Persistence for Control Plane HA
+Before=kubelet.service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/sbin/iptables -t nat -C OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || /sbin/iptables -t nat -A OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination 127.0.0.1:6443'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now kubeops-vip-route.service 2>/dev/null || true
+fi
 REMOTE
     done
 
