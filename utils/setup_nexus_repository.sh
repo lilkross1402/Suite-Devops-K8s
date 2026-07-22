@@ -118,6 +118,7 @@ setup_nexus_server() {
 
     local nexus_port="8081"
     local docker_port="8082"
+    local admin_password="Admin123!"
 
     _ensure_container_engine
 
