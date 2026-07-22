@@ -47,13 +47,17 @@ deploy_istio_kiali() {
     kubectl apply -f "https://raw.githubusercontent.com/istio/istio/${istio_version}/samples/addons/kiali.yaml" 2>/dev/null || \
     kubectl apply -f "https://raw.githubusercontent.com/istio/istio/release-1.21/samples/addons/kiali.yaml"
 
+    log_info "Exponiendo Kiali Dashboard vía NodePort (puerto 30001)..."
+    sleep 3
+    kubectl patch svc kiali -n istio-system -p '{"spec": {"type": "NodePort", "ports": [{"name": "http-kiali", "port": 20001, "nodePort": 30001}]}}' 2>/dev/null || true
+
     state_set ".stack.istio.installed" "true"
     state_set ".stack.istio.version" "${istio_version}"
     state_set ".stack.kiali.installed" "true"
 
     log_success "¡Istio Service Mesh & Dashboard Kiali desplegados exitosamente!"
-    printf "  ${CLR_BOLD_WHITE}Comando para acceder a Kiali Dashboard:${CLR_RESET}\n"
-    printf "  ${CLR_BOLD_CYAN}kubectl port-forward svc/kiali -n istio-system 20001:20001${CLR_RESET}\n\n"
+    printf "  ${CLR_BOLD_WHITE}Acceso directo a Kiali Dashboard en el navegador:${CLR_RESET}\n"
+    printf "  ${CLR_BOLD_CYAN}http://<IP_MASTER_O_PUBLIC_IP>:30001${CLR_RESET}\n\n"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
