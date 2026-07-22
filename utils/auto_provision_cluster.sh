@@ -93,6 +93,13 @@ K8S_VERSION="${1:-1.29}"
 K8S_VERSION_FULL="${2:-1.29.15}"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
+# ---- Wait for dpkg lock ----
+systemctl stop unattended-upgrades 2>/dev/null || true
+pkill -f unattended-upgrade 2>/dev/null || true
+while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    sleep 2
+done
+
 # ---- Kernel modules & sysctl ----
 cat >/etc/modules-load.d/k8s.conf <<EOF
 overlay
@@ -183,6 +190,13 @@ _phase2_deploy_vip() {
 set -euo pipefail
 VIP="${1}"; PRIORITY="${2}"; M1="${3}"; M2="${4}"; M3="${5:-}"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+
+# ---- Wait for dpkg lock ----
+systemctl stop unattended-upgrades 2>/dev/null || true
+pkill -f unattended-upgrade 2>/dev/null || true
+while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    sleep 2
+done
 
 # ---- net.ipv4.ip_nonlocal_bind ----
 echo "net.ipv4.ip_nonlocal_bind = 1" >/etc/sysctl.d/99-vip.conf
