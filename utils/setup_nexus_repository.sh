@@ -124,13 +124,19 @@ setup_nexus_server() {
     # 1. Crear volumen e iniciar contenedor Sonatype Nexus 3
     log_info "Creando volumen persistente 'nexus-data' e iniciando Sonatype Nexus 3..."
     sudo docker volume create nexus-data 2>/dev/null || true
-    sudo docker run -d \
-        --name nexus \
-        --restart always \
-        -p "${nexus_port}:8081" \
-        -p "${docker_port}:8082" \
-        -v nexus-data:/nexus-data \
-        sonatype/nexus3:latest || true
+
+    if sudo docker ps -a --format '{{.Names}}' | grep -q "^nexus$"; then
+        log_info "Reutilizando contenedor Nexus existente..."
+        sudo docker start nexus 2>/dev/null || true
+    else
+        sudo docker run -d \
+            --name nexus \
+            --restart always \
+            -p "${nexus_port}:8081" \
+            -p "${docker_port}:8082" \
+            -v nexus-data:/nexus-data \
+            sonatype/nexus3:latest || true
+    fi
 
     log_info "Esperando a que la API de Nexus 3 esté respondiendo (esto puede tardar 60-90 segundos)..."
     until sudo docker exec nexus curl -fsSL http://localhost:8081/service/rest/v1/status &>/dev/null; do
@@ -200,9 +206,10 @@ EOF
     sudo systemctl restart docker
 
     log_info "Esperando a que el puerto del registro Docker (8082) esté activo..."
-    until curl -fsSL "http://127.0.0.1:${docker_port}/v2/" &>/dev/null || curl -fsSL "http://localhost:${docker_port}/" &>/dev/null; do
+    until nc -z -w 3 127.0.0.1 "${docker_port}" 2>/dev/null || [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${docker_port}/v2/" 2>/dev/null)" =~ ^(200|401|403)$ ]]; do
         sleep 3
     done
+    log_success "Puerto del registro Docker (8082) activo y respondiendo."
 
     log_info "Iniciando sesión en el registro Nexus local como administrador..."
     sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || \
