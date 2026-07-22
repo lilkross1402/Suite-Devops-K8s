@@ -171,7 +171,7 @@ setup_nexus_server() {
         -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
-    # 4. Configurar Repositorio Docker Hosted (Puerto 8082)
+    # 4. Configurar Repositorio Docker Hosted (Puerto 8082) con Autenticación Básica Forzada
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
     local repo_payload='{
         "name": "docker-hosted",
@@ -185,35 +185,24 @@ setup_nexus_server() {
             "proprietaryComponents": true
         },
         "docker": {
-            "v1Enabled": true,
-            "forceBasicAuth": false,
+            "v1Enabled": false,
+            "forceBasicAuth": true,
             "httpPort": 8082
         }
     }'
 
-    sudo docker exec nexus curl -fsSL -X POST -u "admin:${admin_password}" \
+    sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
+        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || \
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d "${repo_payload}" "http://localhost:8081/service/rest/v1/repositories/docker/hosted/docker-hosted" 2>/dev/null || true
 
     log_info "Habilitando acceso anónimo a nivel de sistema..."
-    sudo docker exec nexus curl -fsSL -X PUT -u "admin:${admin_password}" \
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
         -d '{"enabled": true, "anonymousAccess": true}' \
         "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
-
-    log_info "Asignando privilegios completos de administración al usuario anónimo en Nexus 3..."
-    sudo docker exec nexus curl -fsSL -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "userId": "anonymous",
-            "firstName": "Anonymous",
-            "lastName": "User",
-            "emailAddress": "anonymous@example.org",
-            "source": "default",
-            "status": "active",
-            "readOnly": false,
-            "roles": ["nx-anonymous", "nx-admin"]
-        }' "http://localhost:8081/service/rest/v1/security/users/anonymous" 2>/dev/null || true
 
     log_success "Repositorio Docker en puerto ${docker_port} configurado exitosamente."
 
@@ -234,8 +223,11 @@ EOF
     log_success "Servicio del registro Docker (8082) activo y respondiendo."
 
     # 6. Autenticar cliente Docker CLI desatendido
-    log_info "Iniciando sesión en el registro Nexus local como administrador..."
-    echo "${admin_password}" | sudo docker login "127.0.0.1:${docker_port}" -u admin --password-stdin 2>/dev/null || true
+    log_info "Iniciando sesión en el registro Nexus local (127.0.0.1:${docker_port}) como administrador..."
+    if ! echo "${admin_password}" | sudo docker login "127.0.0.1:${docker_port}" -u admin --password-stdin; then
+        log_warn "Re-intentando inicio de sesión en ${primary_ip}:${docker_port}..."
+        echo "${admin_password}" | sudo docker login "${primary_ip}:${docker_port}" -u admin --password-stdin
+    fi
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
     log_info "Iniciando descarga y precarga de imágenes hacia el registro local (${primary_ip}:${docker_port})..."
