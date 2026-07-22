@@ -157,11 +157,11 @@ setup_nexus_server() {
             "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
     fi
 
-    # Activar Realms para Docker Basic Auth y Token (Orden Requerido por Nexus 3)
+    # Activar Realms para Docker Basic Auth y Token (Nexus 3 Válidos: NexusAuthenticatingRealm, DockerToken)
     log_info "Activando Realms de Seguridad para Docker (NexusAuthenticatingRealm + DockerToken)..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+        -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
     # 3. Configurar Registro Docker Hosted (Puerto 8082) y Anonymous Access
@@ -211,7 +211,7 @@ EOF
     log_success "Servicio del registro Docker (8082) activo y respondiendo."
 
     log_info "Iniciando sesión en el registro Nexus local como administrador..."
-    if ! sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null; then
+    if ! echo "${admin_password}" | sudo docker login "127.0.0.1:${docker_port}" -u admin --password-stdin 2>/dev/null; then
         log_warn "Credenciales previas desincronizadas. Re-creando contenedor Nexus de forma limpia..."
         sudo docker rm -f nexus 2>/dev/null || true
         sudo docker volume rm nexus-data 2>/dev/null || true
@@ -229,21 +229,23 @@ EOF
             sleep 5
         done
 
-        local new_pass
-        for i in $(seq 1 12); do
+        local new_pass=""
+        for i in $(seq 1 20); do
             new_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null || echo "")
             [[ -n "${new_pass}" ]] && break
-            sleep 5
+            sleep 3
         done
 
-        sudo docker exec nexus curl -s -X PUT -u "admin:${new_pass}" \
-            -H "Content-Type: text/plain" \
-            -d "${admin_password}" \
-            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+        if [[ -n "${new_pass}" ]]; then
+            sudo docker exec nexus curl -s -X PUT -u "admin:${new_pass}" \
+                -H "Content-Type: text/plain" \
+                -d "${admin_password}" \
+                "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+        fi
 
         sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
             -H "Content-Type: application/json" \
-            -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+            -d '["NexusAuthenticatingRealm", "DockerToken"]' \
             "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
         sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
@@ -271,7 +273,7 @@ EOF
             -d '{"enabled": true, "anonymousAccess": true}' \
             "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
 
-        sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}"
+        echo "${admin_password}" | sudo docker login "127.0.0.1:${docker_port}" -u admin --password-stdin
     fi
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
