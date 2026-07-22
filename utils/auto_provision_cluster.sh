@@ -636,62 +636,6 @@ REMOTE
         sleep 5
     done
 
-    # Instalar CNI en Máster 1
-    log_info "  Instalando CNI: ${cni_plugin} v${cni_version} (Modo: ${deploy_mode})..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" "${deploy_mode}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
-set -euo pipefail
-CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"; MODE="${4:-online}"; NEXUS_IP="${5:-}"; NEXUS_PORT="${6:-8082}"
-export KUBECONFIG=/etc/kubernetes/admin.conf
-
-if [[ "${MODE}" == "airgap" ]]; then
-    log_info "Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
-    OFFLINE_MANIFEST=$(find /home/${SUDO_USER:-ubuntu}/kubeops-suite/offline-assets /root/kubeops-suite/offline-assets -name "${CNI_PLUGIN}*.yaml" -o -name "calico.yaml" -o -name "kube-flannel.yml" 2>/dev/null | head -1 || echo "")
-    if [[ -n "${OFFLINE_MANIFEST}" && -f "${OFFLINE_MANIFEST}" ]]; then
-        if [[ -n "${NEXUS_IP}" ]]; then
-            sed "s|quay.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|docker.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|registry.k8s.io|${NEXUS_IP}:${NEXUS_PORT}|g" \
-                "${OFFLINE_MANIFEST}" > /tmp/cni-airgap.yaml
-            kubectl apply -f /tmp/cni-airgap.yaml
-            rm -f /tmp/cni-airgap.yaml
-        else
-            kubectl apply -f "${OFFLINE_MANIFEST}"
-        fi
-        echo "CNI_AIRGAP_OK"
-        exit 0
-    fi
-fi
-
-case "${CNI_PLUGIN}" in
-  cilium)
-    if ! command -v helm &>/dev/null; then
-        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
-    fi
-    if command -v helm &>/dev/null; then
-        helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
-        helm repo update cilium 2>/dev/null || true
-        CLEAN_VER="${CNI_VERSION#v}"
-        helm upgrade --install cilium cilium/cilium \
-            --version "${CLEAN_VER}" \
-            --namespace kube-system \
-            --set kubeProxyReplacement=true \
-            --set k8sServiceHost="127.0.0.1" \
-            --set k8sServicePort=6443 \
-            --kubeconfig=/etc/kubernetes/admin.conf 2>&1 || true
-    else
-        kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" 2>&1 || true
-    fi
-    ;;
-  calico)
-    curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/v${CNI_VERSION}/manifests/calico.yaml" | \
-        sed "s|192.168.0.0/16|${POD_CIDR}|g" | kubectl apply -f - 2>&1 || true
-    ;;
-  flannel)
-    kubectl apply -f \
-        "https://github.com/flannel-io/flannel/releases/download/v${CNI_VERSION}/kube-flannel.yml" 2>&1 || true
-    ;;
-esac
-echo "CNI_OK"
-REMOTE
-
     # ── Capturar join tokens ──────────────────────────────────────────────────
     log_info "  Capturando tokens de unión desde el Máster 1..."
     local cert_key join_cmd
@@ -738,6 +682,67 @@ REMOTE
             log_info "  Worker ${node} ya está unido activamente."
         fi
     done
+
+    # ── PASO 7/6: Instalar Plugin de Red (CNI) en el Clúster HA Completo ────
+    log_info "[Paso 7/6] Desplegando CNI: ${cni_plugin} v${cni_version} (Modo: ${deploy_mode})..."
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" "${deploy_mode}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
+set -euo pipefail
+CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"; MODE="${4:-online}"; NEXUS_IP="${5:-}"; NEXUS_PORT="${6:-8082}"
+
+# Direct local kubeconfig to 127.0.0.1:6443 to bypass load-balancer during CNI bootstrap
+cp -f /etc/kubernetes/admin.conf /tmp/admin-local.conf
+sed -i 's|https://.*:8443|https://127.0.0.1:6443|g' /tmp/admin-local.conf
+export KUBECONFIG=/tmp/admin-local.conf
+
+if [[ "${MODE}" == "airgap" ]]; then
+    log_info "Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
+    OFFLINE_MANIFEST=$(find /home/${SUDO_USER:-ubuntu}/kubeops-suite/offline-assets /root/kubeops-suite/offline-assets -name "${CNI_PLUGIN}*.yaml" -o -name "calico.yaml" -o -name "kube-flannel.yml" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${OFFLINE_MANIFEST}" && -f "${OFFLINE_MANIFEST}" ]]; then
+        if [[ -n "${NEXUS_IP}" ]]; then
+            sed "s|quay.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|docker.io|${NEXUS_IP}:${NEXUS_PORT}|g; s|registry.k8s.io|${NEXUS_IP}:${NEXUS_PORT}|g" \
+                "${OFFLINE_MANIFEST}" > /tmp/cni-airgap.yaml
+            kubectl apply -f /tmp/cni-airgap.yaml --kubeconfig=/tmp/admin-local.conf
+            rm -f /tmp/cni-airgap.yaml
+        else
+            kubectl apply -f "${OFFLINE_MANIFEST}" --kubeconfig=/tmp/admin-local.conf
+        fi
+        echo "CNI_AIRGAP_OK"
+        exit 0
+    fi
+fi
+
+case "${CNI_PLUGIN}" in
+  cilium)
+    if ! command -v helm &>/dev/null; then
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
+    fi
+    if command -v helm &>/dev/null; then
+        helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
+        helm repo update cilium 2>/dev/null || true
+        CLEAN_VER="${CNI_VERSION#v}"
+        helm upgrade --install cilium cilium/cilium \
+            --version "${CLEAN_VER}" \
+            --namespace kube-system \
+            --set kubeProxyReplacement=true \
+            --set k8sServiceHost="127.0.0.1" \
+            --set k8sServicePort=6443 \
+            --kubeconfig=/tmp/admin-local.conf 2>&1 || true
+    else
+        kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
+    fi
+    ;;
+  calico)
+    curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/v${CNI_VERSION}/manifests/calico.yaml" | \
+        sed "s|192.168.0.0/16|${POD_CIDR}|g" | kubectl apply -f - --kubeconfig=/tmp/admin-local.conf 2>&1 || true
+    ;;
+  flannel)
+    kubectl apply -f \
+        "https://github.com/flannel-io/flannel/releases/download/v${CNI_VERSION}/kube-flannel.yml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
+    ;;
+esac
+rm -f /tmp/admin-local.conf
+echo "CNI_OK"
+REMOTE
 
     printf "\n"
     log_section "🎉 ¡AUTO-DESPLIEGUE DEL CLÚSTER HA COMPLETADO!"
