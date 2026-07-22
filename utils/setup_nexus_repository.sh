@@ -144,9 +144,9 @@ setup_nexus_server() {
     done
     log_success "Servidor Nexus 3 activo y respondiendo."
 
-    # 2. Recuperar la contraseña de admin inicial de Nexus
-    local admin_password
-    log_info "Obteniendo contraseña inicial de administrador..."
+    # 2. Recuperar y fijar la contraseña de admin en Nexus 3
+    local admin_password=""
+    log_info "Obteniendo contraseña de administrador de Nexus 3..."
     for i in $(seq 1 12); do
         admin_password=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null || echo "")
         if [[ -n "${admin_password}" ]]; then
@@ -155,10 +155,23 @@ setup_nexus_server() {
         sleep 5
     done
 
+    # Si ya fue cambiada previamente, probar con Admin123! o admin
     if [[ -z "${admin_password}" ]]; then
-        log_warn "No se encontró admin.password (es posible que ya haya sido cambiada anteriormente)."
-        admin_password="admin"
+        if sudo docker exec nexus curl -s -u "admin:Admin123!" "http://localhost:8081/service/rest/v1/status" &>/dev/null; then
+            admin_password="Admin123!"
+        elif sudo docker exec nexus curl -s -u "admin:admin" "http://localhost:8081/service/rest/v1/status" &>/dev/null; then
+            admin_password="admin"
+        else
+            admin_password="admin"
+        fi
     fi
+
+    # Fijar contraseña de admin a Admin123! de forma determinista
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+        -H "Content-Type: text/plain" \
+        -d "Admin123!" \
+        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+    admin_password="Admin123!"
 
     # 3. Configurar Registro Docker Hosted (Puerto 8082), Anonymous Access y DockerToken Realm
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
@@ -182,7 +195,7 @@ setup_nexus_server() {
             }
         }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" || true
 
-    log_info "Habilitando acceso anónimo y realm DockerToken..."
+    log_info "Habilitando acceso anónimo y privilegios de lectura/escritura Docker..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
         -d '{"enabled": true, "anonymousAccess": true}' \
@@ -192,6 +205,17 @@ setup_nexus_server() {
         -H "Content-Type: application/json" \
         -d '["DockerToken", "NexusAuthenticatingRealm"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" || true
+
+    # Otorgar permiso de escritura en repositorios Docker al rol nx-anonymous
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "id": "nx-anonymous",
+            "name": "Nexus Anonymous Role",
+            "description": "Anonymous role with full docker access",
+            "privileges": ["nx-repository-view-docker-*-*", "nx-repository-admin-docker-*-*"],
+            "roles": []
+        }' "http://localhost:8081/service/rest/v1/security/roles/nx-anonymous" || true
 
     log_success "Repositorio Docker en puerto ${docker_port} configurado exitosamente."
 
