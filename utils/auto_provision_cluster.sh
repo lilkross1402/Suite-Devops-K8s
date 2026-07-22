@@ -281,13 +281,12 @@ frontend k8s-api
     default_backend k8s-masters
 backend k8s-masters
     mode tcp
-    option httpchk GET /healthz
-    http-check expect status 200
+    option tcp-check
     balance roundrobin
-    server master1 ${M1}:6443 check check-ssl verify none
-    server master2 ${M2}:6443 check check-ssl verify none
+    server master1 ${M1}:6443 check fall 3 rise 2
+    server master2 ${M2}:6443 check fall 3 rise 2
 EOF
-[[ -n "${M3}" ]] && echo "    server master3 ${M3}:6443 check check-ssl verify none" >>/etc/haproxy/haproxy.cfg
+[[ -n "${M3}" ]] && echo "    server master3 ${M3}:6443 check fall 3 rise 2" >>/etc/haproxy/haproxy.cfg
 systemctl enable haproxy && systemctl restart haproxy
 
 # ---- Keepalived config ----
@@ -465,7 +464,11 @@ auto_provision_ha_cluster() {
             cni_plugin="cilium"
             printf "  Versión de Cilium [1.15.5]: "
             read -r cilium_v
-            cni_version="${cilium_v:-1.15.5}"
+            if [[ -z "${cilium_v}" || "${cilium_v}" == "1" ]]; then
+                cni_version="1.15.5"
+            else
+                cni_version="${cilium_v#v}"
+            fi
             ;;
     esac
     log_info "CNI seleccionado: ${cni_plugin} v${cni_version}"
