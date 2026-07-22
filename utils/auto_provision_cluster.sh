@@ -154,20 +154,13 @@ systemctl enable --now containerd 2>/dev/null || true
 
 # ---- Install kubeadm / kubelet / kubectl ----
 if ! command -v kubeadm &>/dev/null; then
-    apt-get update -qq
-    apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | \
-        gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null || true
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
-https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" \
-    >/etc/apt/sources.list.d/kubernetes.list
     apt-get update -qq 2>/dev/null || true
-    apt-get install -y --fix-missing \
-        kubelet=${K8S_VERSION_FULL}-1.1 \
-        kubeadm=${K8S_VERSION_FULL}-1.1 \
-        kubectl=${K8S_VERSION_FULL}-1.1 2>/dev/null || \
-    apt-get install -y --fix-missing kubelet kubeadm kubectl
+    apt-get install -y --fix-missing --no-install-recommends curl gnupg apt-transport-https 2>/dev/null || true
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" -o /etc/apt/keyrings/kubernetes-apt-keyring.asc 2>/dev/null || true
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" >/etc/apt/sources.list.d/kubernetes.list
+    apt-get update -qq 2>/dev/null || true
+    apt-get install -y --fix-missing kubelet kubeadm kubectl 2>/dev/null || true
     apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
 fi
 
@@ -497,7 +490,19 @@ auto_provision_ha_cluster() {
     for pid in "${pids[@]}"; do
         wait "${pid}" || true
     done
-    log_success "Prerequisitos instalados en todos los nodos."
+
+    # Verificación estricta de binario kubeadm en todos los nodos
+    local kubeadm_missing=0
+    for node in "${all_nodes[@]}"; do
+        if ! _ssh "${ssh_user}@${node}" "command -v kubeadm" &>/dev/null; then
+            log_error "El binario 'kubeadm' no se instaló en el nodo ${node}"
+            kubeadm_missing=1
+        fi
+    done
+    if [[ "${kubeadm_missing}" -eq 1 ]]; then
+        log_fatal "Faltan binarios de K8s en algunos nodos. Abortando instalación antes del Paso 4/5."
+    fi
+    log_success "Prerequisitos y binarios de K8s (kubeadm/kubelet/kubectl) verificados en todos los nodos."
 
     # ── PASO 4/6: VIP HAProxy + Keepalived en Masters ────────────────────────
     log_info "[Paso 4/6] Desplegando Virtual IP HA (HAProxy + Keepalived) en los Másters..."
