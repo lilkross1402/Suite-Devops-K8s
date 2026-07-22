@@ -680,7 +680,13 @@ REMOTE
         if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
             log_info "  Uniendo Worker ${node} al clúster..."
             _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
-            _ssh "${ssh_user}@${node}" "sudo ${join_cmd}" || true
+            
+            local w_join_cmd="${join_cmd}"
+            if ! _ssh "${ssh_user}@${node}" "nc -z -w 3 ${vip_ip} 8443 2>/dev/null" &>/dev/null; then
+                log_info "    Worker ${node} cruza subredes AWS VPC hacia VIP. Usando endpoint HA ${master1_ip}:8443..."
+                w_join_cmd=$(echo "${join_cmd}" | sed "s|${vip_ip}:8443|${master1_ip}:8443|g")
+            fi
+            _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" || true
         else
             log_info "  Worker ${node} ya está unido activamente."
         fi
