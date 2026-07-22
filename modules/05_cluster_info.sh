@@ -19,11 +19,29 @@ _print_separator() {
     echo ""
 }
 
+_auto_repair_rebooted_nodes() {
+    local kubeconfig="${HOME}/.kube/config"
+    [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
+
+    if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
+        local not_ready_nodes
+        not_ready_nodes=$(kubectl get nodes --kubeconfig="${kubeconfig}" 2>/dev/null | grep -i "NotReady" | awk '{print $1}' || echo "")
+        if [[ -n "${not_ready_nodes}" ]]; then
+            log_info "Detectado nodo en estado NotReady. Aplicando autorreparación de ruta VIP..."
+            sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || true
+            sudo systemctl restart kubelet 2>/dev/null || true
+            sleep 3
+        fi
+    fi
+}
+
 _show_nodes() {
     local kubeconfig="${HOME}/.kube/config"
     if [[ ! -f "${kubeconfig}" ]]; then
         kubeconfig="/etc/kubernetes/admin.conf"
     fi
+
+    _auto_repair_rebooted_nodes
 
     log_section "Nodos del Clúster"
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
