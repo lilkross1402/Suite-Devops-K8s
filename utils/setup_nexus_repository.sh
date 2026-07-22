@@ -199,6 +199,15 @@ setup_nexus_server() {
 EOF
     sudo systemctl restart docker
 
+    log_info "Esperando a que el puerto del registro Docker (8082) esté activo..."
+    until curl -fsSL "http://127.0.0.1:${docker_port}/v2/" &>/dev/null || curl -fsSL "http://localhost:${docker_port}/" &>/dev/null; do
+        sleep 3
+    done
+
+    log_info "Iniciando sesión en el registro Nexus local como administrador..."
+    sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || \
+    sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
+
     # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
     log_info "Iniciando descarga y precarga de imágenes hacia el registro local (${primary_ip}:${docker_port})..."
     for img in "${REQUIRED_IMAGES[@]}"; do
@@ -209,7 +218,12 @@ EOF
     done
 
     # 6. Guardar estado del servidor Nexus
-    state_set_registry "${primary_ip}:${docker_port}" "nexus" "${public_ip}"
+    if declare -f state_save_registry &>/dev/null; then
+        state_save_registry "${primary_ip}" "${docker_port}"
+    fi
+    if declare -f state_save_nexus &>/dev/null; then
+        state_save_nexus "${primary_ip}:${docker_port}" 2>/dev/null || true
+    fi
 
     log_section "🎉 ¡SERVIDOR REPOSITORIO NEXUS 3 LISTO PARA AIR-GAP!"
     printf "  %-30s %s\n" "Interfaz Web (Nexus UI):" "http://${public_ip}:${nexus_port}"
