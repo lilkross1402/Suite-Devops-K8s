@@ -396,7 +396,10 @@ _print_menu() {
         "Servidor de imágenes Docker para despliegues Air-Gapped"
 
     _print_menu_item "E" "🚀" "Catálogo de Extensiones Enterprise" \
-        "Istio, Kiali, Cert-Manager, Longhorn, Stern, K9s (Módulos / Todo)"
+        "Istio, Kiali, Cert-Manager, Stern, K9s (Módulos / Todo)"
+
+    _print_menu_item "G" "🛡️ " "GitOps & Resiliencia (ArgoCD + Velero + Storage)" \
+        "Desplegar ArgoCD HA, Velero Backups y OpenEBS/NFS Storage"
 
     _print_menu_separator
 
@@ -600,6 +603,18 @@ _handle_show_enterprise_stack() {
     fi
 }
 
+_handle_show_gitops_resilience_menu() {
+    local script="${SUITE_ROOT}/stack/deploy_gitops_resilience.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        show_gitops_resilience_menu
+    else
+        log_error "Script de GitOps & Resiliencia no encontrado: ${script}"
+        pause
+    fi
+}
+
 _handle_show_logs() {
     local log_file="${KUBEOPS_LOG_DIR:-/var/log/kubeops}/kubeops-$(date +%Y%m%d).log"
     if [[ ! -f "${log_file}" ]]; then
@@ -683,6 +698,10 @@ _main_loop() {
             [eE])
                 clear
                 _handle_show_enterprise_stack ;;
+
+            [gG])
+                clear
+                _handle_show_gitops_resilience_menu ;;
 
             [lL])
                 clear

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: velero
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: daily-etcd-and-cluster-backup
+  namespace: velero
+spec:
+  schedule: "0 2 * * *"
+  template:
+    includedNamespaces:
+      - "*"
+    includeClusterResources: true
+    ttl: 720h0m0s
