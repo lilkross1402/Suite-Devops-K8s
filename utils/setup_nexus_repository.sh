@@ -145,35 +145,26 @@ setup_nexus_server() {
     log_success "Servidor Nexus 3 activo y respondiendo."
 
     # 2. Recuperar y fijar la contraseña de admin en Nexus 3
-    local admin_password=""
-    log_info "Obteniendo contraseña de administrador de Nexus 3..."
-    for i in $(seq 1 12); do
-        admin_password=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null || echo "")
-        if [[ -n "${admin_password}" ]]; then
-            break
-        fi
-        sleep 5
-    done
+    local init_pass
+    init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null || echo "")
 
-    # Si ya fue cambiada previamente, probar con Admin123! o admin
-    if [[ -z "${admin_password}" ]]; then
-        if sudo docker exec nexus curl -s -u "admin:Admin123!" "http://localhost:8081/service/rest/v1/status" &>/dev/null; then
-            admin_password="Admin123!"
-        elif sudo docker exec nexus curl -s -u "admin:admin" "http://localhost:8081/service/rest/v1/status" &>/dev/null; then
-            admin_password="admin"
-        else
-            admin_password="admin"
-        fi
+    local admin_password="Admin123!"
+    if [[ -n "${init_pass}" ]]; then
+        log_info "Cambiando contraseña de admin inicial a '${admin_password}'..."
+        sudo docker exec nexus curl -s -X PUT -u "admin:${init_pass}" \
+            -H "Content-Type: text/plain" \
+            -d "${admin_password}" \
+            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
     fi
 
-    # Fijar contraseña de admin a Admin123! de forma determinista
+    # Activar Realms para Docker Basic Auth y Token (Orden Requerido por Nexus 3)
+    log_info "Activando Realms de Seguridad para Docker (NexusAuthenticatingRealm + DockerToken)..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: text/plain" \
-        -d "Admin123!" \
-        "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
-    admin_password="Admin123!"
+        -H "Content-Type: application/json" \
+        -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+        "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
-    # 3. Configurar Registro Docker Hosted (Puerto 8082), Anonymous Access y DockerToken Realm
+    # 3. Configurar Registro Docker Hosted (Puerto 8082) y Anonymous Access
     log_info "Configurando el repositorio Docker Hosted en el puerto ${docker_port}..."
     sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
@@ -193,29 +184,13 @@ setup_nexus_server() {
                 \"forceBasicAuth\": false,
                 \"httpPort\": 8082
             }
-        }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" || true
+        }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
 
-    log_info "Habilitando acceso anónimo y privilegios de lectura/escritura Docker..."
+    log_info "Habilitando acceso anónimo a nivel de repositorio Nexus..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
         -d '{"enabled": true, "anonymousAccess": true}' \
-        "http://localhost:8081/service/rest/v1/security/anonymous" || true
-
-    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d '["DockerToken", "NexusAuthenticatingRealm"]' \
-        "http://localhost:8081/service/rest/v1/security/realms/active" || true
-
-    # Otorgar permiso de escritura en repositorios Docker al rol nx-anonymous
-    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "id": "nx-anonymous",
-            "name": "Nexus Anonymous Role",
-            "description": "Anonymous role with full docker access",
-            "privileges": ["nx-repository-view-docker-*-*", "nx-repository-admin-docker-*-*"],
-            "roles": []
-        }' "http://localhost:8081/service/rest/v1/security/roles/nx-anonymous" || true
+        "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
 
     log_success "Repositorio Docker en puerto ${docker_port} configurado exitosamente."
 
@@ -236,8 +211,68 @@ EOF
     log_success "Servicio del registro Docker (8082) activo y respondiendo."
 
     log_info "Iniciando sesión en el registro Nexus local como administrador..."
-    sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
-    sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
+    if ! sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null; then
+        log_warn "Credenciales previas desincronizadas. Re-creando contenedor Nexus de forma limpia..."
+        sudo docker rm -f nexus 2>/dev/null || true
+        sudo docker volume rm nexus-data 2>/dev/null || true
+        sudo docker volume create nexus-data 2>/dev/null || true
+        sudo docker run -d \
+            --name nexus \
+            --restart always \
+            -p "${nexus_port}:8081" \
+            -p "${docker_port}:8082" \
+            -v nexus-data:/nexus-data \
+            sonatype/nexus3:latest
+
+        log_info "Esperando inicialización limpia de Nexus 3 (60 segundos)..."
+        until sudo docker exec nexus curl -fsSL http://localhost:8081/service/rest/v1/status &>/dev/null; do
+            sleep 5
+        done
+
+        local new_pass
+        for i in $(seq 1 12); do
+            new_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null || echo "")
+            [[ -n "${new_pass}" ]] && break
+            sleep 5
+        done
+
+        sudo docker exec nexus curl -s -X PUT -u "admin:${new_pass}" \
+            -H "Content-Type: text/plain" \
+            -d "${admin_password}" \
+            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+
+        sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+            -H "Content-Type: application/json" \
+            -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+            "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
+
+        sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"name\": \"docker-hosted\",
+                \"online\": true,
+                \"storage\": {
+                    \"blobStoreName\": \"default\",
+                    \"strictContentTypeValidation\": true,
+                    \"writePolicy\": \"allow\"
+                },
+                \"component\": {
+                    \"proprietaryComponents\": true
+                },
+                \"docker\": {
+                    \"v1Enabled\": true,
+                    \"forceBasicAuth\": false,
+                    \"httpPort\": 8082
+                }
+            }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
+
+        sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+            -H "Content-Type: application/json" \
+            -d '{"enabled": true, "anonymousAccess": true}' \
+            "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
+
+        sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}"
+    fi
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas para el clúster Air-Gap
     log_info "Iniciando descarga y precarga de imágenes hacia el registro local (${primary_ip}:${docker_port})..."
