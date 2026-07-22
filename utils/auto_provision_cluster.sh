@@ -149,8 +149,8 @@ timeout: 10
 debug: false
 EOF
 
-systemctl restart containerd
-systemctl enable --now containerd
+systemctl restart containerd 2>/dev/null || true
+systemctl enable --now containerd 2>/dev/null || true
 
 # ---- Install kubeadm / kubelet / kubectl ----
 if ! command -v kubeadm &>/dev/null; then
@@ -512,7 +512,7 @@ mkdir -p "${HOME}/.kube"
 # Ensure containerd CRI plugin is active
 sed -i 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' /etc/containerd/config.toml 2>/dev/null || true
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml 2>/dev/null || true
-systemctl restart containerd
+systemctl restart containerd 2>/dev/null || true
 sleep 2
 
 if [[ -f /etc/kubernetes/admin.conf ]]; then
