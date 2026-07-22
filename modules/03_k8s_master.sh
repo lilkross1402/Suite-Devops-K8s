@@ -955,10 +955,9 @@ _deploy_cni_online() {
                 log_info "Desplegando Cilium vía Helm..."
                 helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
                 helm repo update cilium 2>/dev/null || true
-                helm install cilium cilium/cilium --version 1.15.5 \
+                helm upgrade --install cilium cilium/cilium --version 1.15.5 \
                     --namespace kube-system \
-                    --set nodeinit.enabled=true \
-                    --set ipam.mode=kubernetes \
+                    --set kubeProxyReplacement=true \
                     --kubeconfig="${KUBECONFIG_PATH}" || true
             else
                 log_info "Desplegando Calico CNI como fallback de red..."

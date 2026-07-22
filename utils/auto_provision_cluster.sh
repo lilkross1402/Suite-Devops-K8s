@@ -574,8 +574,7 @@ case "${CNI_PLUGIN}" in
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
-            --set nodeinit.enabled=true \
-            --set ipam.mode=kubernetes 2>&1 || true
+            --set kubeProxyReplacement=true 2>&1 || true
     else
         kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" 2>&1 || true
     fi
