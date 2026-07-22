@@ -23,14 +23,17 @@ _auto_repair_rebooted_nodes() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
+    # Limpiar cualquier regla NAT antigua obsoleta y redirigir al Máster 2 activo (172.31.36.119:6443)
+    sudo iptables -t nat -F OUTPUT 2>/dev/null || true
+    sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j DNAT --to-destination 172.31.36.119:6443 2>/dev/null || true
+
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         local not_ready_nodes
         not_ready_nodes=$(kubectl get nodes --kubeconfig="${kubeconfig}" 2>/dev/null | grep -i "NotReady" | awk '{print $1}' || echo "")
         if [[ -n "${not_ready_nodes}" ]]; then
-            log_info "Detectado nodo en estado NotReady. Aplicando autorreparación de ruta VIP..."
-            sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || true
+            log_info "Detectado nodo en estado NotReady. Restableciendo kubelet..."
             sudo systemctl restart kubelet 2>/dev/null || true
-            sleep 3
+            sleep 2
         fi
     fi
 }
