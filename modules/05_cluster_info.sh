@@ -23,9 +23,10 @@ _auto_repair_rebooted_nodes() {
     local kubeconfig="${HOME}/.kube/config"
     [[ ! -f "${kubeconfig}" ]] && kubeconfig="/etc/kubernetes/admin.conf"
 
-    # Limpiar cualquier regla NAT antigua obsoleta y redirigir al Máster 2 activo (172.31.36.119:6443)
-    sudo iptables -t nat -F OUTPUT 2>/dev/null || true
-    sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j DNAT --to-destination 172.31.36.119:6443 2>/dev/null || true
+    # Asignar la VIP de forma local en lo y redirigir el puerto 8443 al 6443 (0ms de latencia)
+    sudo ip addr add 172.31.36.100/32 dev lo 2>/dev/null || true
+    sudo iptables -t nat -C OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || \
+    sudo iptables -t nat -A OUTPUT -p tcp -d 172.31.36.100 --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || true
 
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         local not_ready_nodes

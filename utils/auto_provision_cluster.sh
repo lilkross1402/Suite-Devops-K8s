@@ -682,8 +682,9 @@ echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh 
 
 # Persistencia de enrutamiento VIP ante reinicios del Control Plane
 if ! nc -z -w 3 "${VIP}" 8443 2>/dev/null; then
-    iptables -t nat -C OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || \
-    iptables -t nat -A OUTPUT -p tcp -d "${VIP}" --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || true
+    ip addr add "${VIP}/32" dev lo 2>/dev/null || true
+    iptables -t nat -C OUTPUT -p tcp -d "${VIP}" --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || \
+    iptables -t nat -A OUTPUT -p tcp -d "${VIP}" --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || true
 
     cat > /etc/systemd/system/kubeops-vip-route.service <<EOF
 [Unit]
@@ -693,7 +694,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/sbin/iptables -t nat -C OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination 127.0.0.1:6443 2>/dev/null || /sbin/iptables -t nat -A OUTPUT -p tcp -d ${VIP} --dport 8443 -j DNAT --to-destination 127.0.0.1:6443'
+ExecStart=/bin/sh -c '/sbin/ip addr add ${VIP}/32 dev lo 2>/dev/null || true; /sbin/iptables -t nat -C OUTPUT -p tcp -d ${VIP} --dport 8443 -j REDIRECT --to-ports 6443 2>/dev/null || /sbin/iptables -t nat -A OUTPUT -p tcp -d ${VIP} --dport 8443 -j REDIRECT --to-ports 6443'
 RemainAfterExit=yes
 
 [Install]
