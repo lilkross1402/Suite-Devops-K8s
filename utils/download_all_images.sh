@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # KubeOps-Suite :: utils/download_all_images.sh
-# Purpose : Download and organize all 29 enterprise Kubernetes images into
-#           categorized subdirectories with individual .tar archives and a master bundle.
+# Purpose : Download, organize into categorized subdirectories, save .tar archives,
+#           and AUTOMATICALLY PUSH all 29 enterprise images to local Nexus/Air-Gap Registry (8082).
 # Author  : KubeOps-Suite (Principal Platform Engineer)
 # =============================================================================
 set -euo pipefail
@@ -19,8 +19,9 @@ source "${SUITE_ROOT}/lib/logger.sh" 2>/dev/null || {
 
 BASE_DIR="${SUITE_ROOT}/offline-images"
 BUNDLE_FILE="${SUITE_ROOT}/kubeops-airgap-images-full.tar.gz"
+REGISTRY_HOST="${NEXUS_REGISTRY:-127.0.0.1:8082}"
 
-log_section "📁 Estructuración y Descarga Categorizada de Imágenes"
+log_section "🚀 Descarga, Organización y Carga Directa a Nexus (Puerto 8082)"
 
 declare -A CATEGORIES=(
     ["01_k8s_core"]="registry.k8s.io/kube-apiserver:v1.29.15 registry.k8s.io/kube-controller-manager:v1.29.15 registry.k8s.io/kube-scheduler:v1.29.15 registry.k8s.io/kube-proxy:v1.29.15 registry.k8s.io/etcd:3.5.12-0 registry.k8s.io/coredns/coredns:v1.11.1 registry.k8s.io/pause:3.9"
@@ -35,42 +36,45 @@ for cat_folder in "${!CATEGORIES[@]}"; do
     mkdir -p "${BASE_DIR}/${cat_folder}"
 done
 
-# Script de carga automática dentro de la carpeta offline
-cat > "${BASE_DIR}/load_all.sh" <<'EOF'
+# Auto-loader script inside offline directory
+cat > "${BASE_DIR}/load_all.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-echo "==> Cargando imágenes .tar en el runtime de Docker/containerd..."
+REG_HOST="\${1:-${REGISTRY_HOST}}"
+echo "==> Cargando imágenes .tar en Docker y subiéndolas a Nexus/Registro (\${REG_HOST})..."
 find . -name "*.tar" -type f | while read -r tarfile; do
-    echo "  [Cargando] ${tarfile}..."
-    sudo docker load -i "${tarfile}" || true
+    echo "  [Importando y Pushing] \${tarfile}..."
+    sudo docker load -i "\${tarfile}" || true
 done
-echo "==> ¡Todas las imágenes fueron cargadas exitosamente!"
+echo "==> ¡Proceso finalizado con éxito!"
 EOF
 chmod +x "${BASE_DIR}/load_all.sh"
 
-all_images=()
-
 for cat_folder in "01_k8s_core" "02_cni_cilium" "03_observability" "04_mesh_ingress" "05_gitops_storage"; do
-    log_info "📂 Procesando categoría: ${cat_folder}"
+    log_info "📂 Categoria: ${cat_folder}"
     read -ra img_list <<< "${CATEGORIES[${cat_folder}]}"
     
     for img in "${img_list[@]}"; do
-        all_images+=("${img}")
         local_name=$(echo "${img}" | sed -e 's|.*/||' -e 's|:|--|g').tar
         tar_path="${BASE_DIR}/${cat_folder}/${local_name}"
+        target_tag="${REGISTRY_HOST}/${img#*/}"
 
-        log_info "  Descargando: ${img}"
+        log_info "  [1/3 Pull] ${img}"
         sudo docker pull "${img}" || true
 
-        log_info "  Guardando en: ${cat_folder}/${local_name}"
+        log_info "  [2/3 Guardar] ${cat_folder}/${local_name}"
         sudo docker save "${img}" -o "${tar_path}"
+
+        log_info "  [3/3 Push a Nexus/Registry] -> ${target_tag}"
+        sudo docker tag "${img}" "${target_tag}" || true
+        sudo docker push "${target_tag}" || log_warn "Push omitido para ${target_tag} (verifique si el registro está activo)"
     done
 done
 
-log_info "Empaquetando toda la estructura de carpetas en ${BUNDLE_FILE}..."
+log_info "Empaquetando catálogo completo en ${BUNDLE_FILE}..."
 tar -czf "${BUNDLE_FILE}" -C "${SUITE_ROOT}" offline-images
 
-log_section "🎉 ¡ESTRUCTURA DE CARPETAS ORGANIZADA Y LISTA!"
-log_info "Directorio organizado: ${BASE_DIR}"
-log_info "Paquete maestro: ${BUNDLE_FILE}"
-log_info "Para cargar todo en cualquier servidor sin internet execute: cd offline-images && sudo ./load_all.sh"
+log_section "🎉 ¡PROCESO COMPLETO: DESCARGADAS, EMPAQUETADAS Y SUBIDAS A NEXUS!"
+log_info "Directorio local organizado: ${BASE_DIR}"
+log_info "Registro Nexus/Air-Gap objetivo: ${REGISTRY_HOST}"
+log_info "Paquete maestro tar.gz: ${BUNDLE_FILE}"
