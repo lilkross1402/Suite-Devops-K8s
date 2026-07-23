@@ -248,7 +248,7 @@ setup_nexus_server() {
     log_info "Habilitando Realm 'Docker Bearer Token' y Acceso Anónimo en Nexus 3..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+        -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
@@ -270,7 +270,7 @@ setup_nexus_server() {
             },
             \"docker\": {
                 \"v1Enabled\": false,
-                \"forceBasicAuth\": false,
+                \"forceBasicAuth\": true,
                 \"httpPort\": ${docker_port}
             }
         }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
