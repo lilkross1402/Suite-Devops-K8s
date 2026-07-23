@@ -812,17 +812,18 @@ case "${CNI_PLUGIN}" in
         # Limpiar recursos huérfanos (de kubectl apply previo) si Helm no tiene el release registrado
         if ! helm status cilium -n kube-system --kubeconfig=/tmp/admin-local.conf &>/dev/null; then
             echo "Asegurando entorno limpio para Helm..."
-            kubectl delete serviceaccount cilium cilium-operator -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete clusterrole cilium cilium-operator --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete clusterrolebinding cilium cilium-operator --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete configmap cilium-config -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete secret cilium-cni-configuration cilium-ca -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete daemonset cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete deployment cilium-operator -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete serviceaccount cilium cilium-operator -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete clusterrole cilium cilium-operator --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete clusterrolebinding cilium cilium-operator --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete configmap cilium-config -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete secret cilium-cni-configuration -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete secret cilium-ca -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete daemonset cilium -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete deployment cilium-operator -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
             
             # Limpieza adicional por etiquetas
-            kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-            kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l k8s-app=cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=cilium -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l k8s-app=cilium -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         fi
 
         helm upgrade --install cilium cilium/cilium \
