@@ -70,10 +70,8 @@ deploy_kagent_platform() {
     kubectl --kubeconfig="${KUBECONFIG}" create namespace kagent 2>/dev/null || true
     
     if command -v helm &>/dev/null; then
-        helm repo add kagent https://kagent-dev.github.io/kagent 2>/dev/null || true
-        helm repo update kagent 2>/dev/null || true
-        helm upgrade --install kagent-crds kagent/kagent-crds -n kagent --create-namespace --kubeconfig="${KUBECONFIG}" 2>/dev/null || true
-        helm upgrade --install kagent kagent/kagent -n kagent --create-namespace --kubeconfig="${KUBECONFIG}" 2>/dev/null || true
+        helm upgrade --install kagent-crds oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds -n kagent --create-namespace --kubeconfig="${KUBECONFIG}" 2>/dev/null || true
+        helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent -n kagent --create-namespace --kubeconfig="${KUBECONFIG}" 2>/dev/null || true
         log_success "Helm charts kagent-crds y kagent instalados"
     else
         log_warn "Helm no detectado. Aplique los CRDs manualmente si es necesario."
