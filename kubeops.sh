@@ -943,13 +943,11 @@ EOF
     printf "    ${CLR_BOLD_CYAN}🎯  SELECCIONAR MÓDULO O PLATAFORMA DE TRABAJO${CLR_RESET}\n\n"
     printf "  [1] 🏗️   Aprovisionamiento y Gestión de Clústeres Kubernetes\n"
     printf "           ${CLR_DIM}(HA, Air-Gap, Nodos, Istio, Kiali, Nexus, Observabilidad 360°, KAgent)${CLR_RESET}\n\n"
-    printf "  [2] 🔍  Auditoría y Análisis de Infraestructura DevOps (SRE Audit)\n"
-    printf "           ${CLR_DIM}(Escaneo de salud, seguridad, specs, compliance y reportes .md/.json)${CLR_RESET}\n\n"
-    printf "  [3] 🛠️   Auto-Remediación y Gestión SRE (DevOps Toolkit)\n"
-    printf "           ${CLR_DIM}(HPA, PDB, NetworkPolicies, Requests/Limits y Rollback automático)${CLR_RESET}\n\n"
+    printf "  [2] 🔍  Auditoría, Análisis y Auto-Remediación SRE (DevOps Toolkit)\n"
+    printf "           ${CLR_DIM}(Auditoría completa, Manifiestos YAML, Auto-Remediación modular, Flujo Completo SRE)${CLR_RESET}\n\n"
     printf "  [0] 🚪  Salir de la Plataforma\n\n"
     printf "  ${CLR_DIM}--------------------------------------------------------------------${CLR_RESET}\n"
-    printf "  ${CLR_BOLD_WHITE}Seleccione una opción [0-3]: ${CLR_RESET}"
+    printf "  ${CLR_BOLD_WHITE}Seleccione una opción [0-2]: ${CLR_RESET}"
 }
 
 _master_selector_loop() {
@@ -963,34 +961,6 @@ _master_selector_loop() {
                 ;;
             2)
                 clear
-                log_section "🔍 Auditoría y Análisis de Infraestructura DevOps / SRE"
-                if command -v python3 &>/dev/null; then
-                    python3 "${SUITE_ROOT}/tools/devops-audit/audit_environment.py" -o sre_audit_report -f all || true
-                    log_success "Reportes de auditoría generados exitosamente en sre_audit_report.json y sre_audit_report.md"
-
-                    log_section "📊 Resumen en Vivo de Hallazgos Remediables en el Clúster"
-                    python3 "${SUITE_ROOT}/tools/devops-audit/remediator_advanced.py" --scan 2>/dev/null || true
-
-                    printf "\n"
-                    read -rp "  ¿Desea proceder a remediar estos hallazgos de una vez (Opción 3)? [y/N]: " rem_answer
-                    if [[ "${rem_answer,,}" == "y" || "${rem_answer,,}" == "yes" || "${rem_answer,,}" == "s" || "${rem_answer,,}" == "si" ]]; then
-                        clear
-                        if [[ -f "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" ]]; then
-                            bash "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" || true
-                        else
-                            log_error "DevOps Toolkit no encontrado en: ${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh"
-                            pause
-                        fi
-                    else
-                        pause
-                    fi
-                else
-                    log_error "Python 3 no está instalado en el sistema. Instálelo con: sudo apt-get install -y python3"
-                    pause
-                fi
-                ;;
-            3)
-                clear
                 if [[ -f "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" ]]; then
                     bash "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" || true
                 else
@@ -1003,7 +973,7 @@ _master_selector_loop() {
                 exit 0
                 ;;
             *)
-                printf "\n  ${CLR_BOLD_RED}Opción inválida: '%s'${CLR_RESET} — Seleccione [0-3]\n" "${choice}"
+                printf "\n  ${CLR_BOLD_RED}Opción inválida: '%s'${CLR_RESET} — Seleccione [0-2]\n" "${choice}"
                 sleep 1
                 ;;
         esac
