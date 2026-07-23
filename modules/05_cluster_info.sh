@@ -29,8 +29,11 @@ _auto_repair_rebooted_nodes() {
     sudo swapoff -a 2>/dev/null || true
     sudo sed -i '/swap/d' /etc/fstab 2>/dev/null || true
 
-    # Ajustar endpoint local directo 127.0.0.1:6443 en el Control Plane
-    sudo sed -i 's|server: https://.*:8443|server: https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME}/.kube/config" 2>/dev/null || true
+    local local_ip
+    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+    if [[ -n "${local_ip}" ]]; then
+        sudo sed -i "s|server: https://127.0.0.1:6443|server: https://${local_ip}:6443|g" /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME}/.kube/config" 2>/dev/null || true
+    fi
 
     if command -v kubectl &>/dev/null && [[ -f "${kubeconfig}" ]]; then
         local not_ready_nodes
