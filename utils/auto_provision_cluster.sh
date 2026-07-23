@@ -822,6 +822,10 @@ case "${CNI_PLUGIN}" in
             --set operator.tolerations[1].operator="Exists" \
             --set operator.tolerations[1].effect="NoSchedule" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
+
+        # Ensure all control planes remain untainted after installation
+        kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
     else
         kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
     fi
