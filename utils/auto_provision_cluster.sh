@@ -831,6 +831,9 @@ case "${CNI_PLUGIN}" in
         kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
 
+        # Trigger immediate refresh of Cilium agent pods across all nodes
+        kubectl rollout restart daemonset/cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+
         # Wait up to 60s for Cilium DaemonSet pods to report Ready on all 6 nodes
         kubectl rollout status daemonset/cilium -n kube-system --timeout=60s --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
     else
