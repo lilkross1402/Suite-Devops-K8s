@@ -806,6 +806,7 @@ case "${CNI_PLUGIN}" in
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
+            --set installCRDs=true \
             --set kubeProxyReplacement=true \
             --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
