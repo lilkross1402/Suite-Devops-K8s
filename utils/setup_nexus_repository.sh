@@ -275,6 +275,20 @@ setup_nexus_server() {
             }
         }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
 
+    # 3b. Crear Repositorio Nativo 'raw-hosted' en Nexus para Binarios y Paquetes Air-Gap
+    log_info "Creando Repositorio 'raw-hosted' en Nexus 3 para binarios y librerías Air-Gap..."
+    sudo docker exec nexus curl -s -X POST -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "raw-hosted",
+            "online": true,
+            "storage": {
+                "blobStoreName": "default",
+                "strictContentTypeValidation": true,
+                "writePolicy": "ALLOW"
+            }
+        }' "http://localhost:8081/service/rest/v1/repositories/raw/hosted" 2>/dev/null || true
+
     # 4. Configurar Docker daemon local para permitir insecure-registry
     log_info "Configurando daemon local /etc/docker/daemon.json para puerto ${docker_port}..."
     sudo mkdir -p /etc/docker
@@ -313,6 +327,17 @@ EOF
         sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
         sudo docker push "127.0.0.1:${docker_port}/${target_name}"
     done
+
+    # 5b. Subir binarios y librerías Air-Gap (kubeadm, kubelet, kubectl, helm, cilium) a Nexus raw-hosted
+    log_info "Inyectando binarios y librerías Air-Gap en Nexus 3 Raw Hosted Repository (repository/raw-hosted)..."
+    if [[ -d "${SUITE_ROOT}/offline-assets" ]]; then
+        find "${SUITE_ROOT}/offline-assets" -type f | while read -r asset; do
+            local filename
+            filename=$(basename "${asset}")
+            log_info "  [Publicando a Nexus Raw] ${filename} -> http://localhost:8081/repository/raw-hosted/${filename}"
+            sudo docker exec nexus curl -s -u "admin:${admin_password}" --upload-file "${asset}" "http://localhost:8081/repository/raw-hosted/${filename}" 2>/dev/null || true
+        done
+    fi
 
     # 6. Guardar estado del servidor Nexus
     if declare -f state_save_registry &>/dev/null; then
