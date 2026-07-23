@@ -787,13 +787,8 @@ _main_loop() {
                 clear
                 _handle_reset_state ;;
 
-            [qQ]|"exit"|"quit")
-                clear
-                log_banner
-                printf "\n  ${CLR_BOLD_WHITE}Thank you for using KubeOps-Suite v%s${CLR_RESET}\n" "${KUBEOPS_VERSION}"
-                printf "  ${CLR_DIM}Your cluster state is preserved at: %s${CLR_RESET}\n\n" \
-                    "${KUBEOPS_STATE_FILE}"
-                exit 0 ;;
+            [qQ]|"exit"|"quit"|0)
+                return 0 ;;
 
             "")
                 # Empty input — just redraw
@@ -929,8 +924,73 @@ main() {
         exit 1
     fi
 
-    # Start main menu loop
-    _main_loop
+    # Start master platform selector loop
+    _master_selector_loop
+}
+
+_print_master_selector() {
+    clear
+    cat << "EOF"
+  ██╗  ██╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███████╗
+  ██║ ██╔╝██║   ██║██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝
+  █████╔╝ ██║   ██║██████╔╝█████╗  ██║   ██║██████╔╝███████╗
+  ██╔═██╗ ██║   ██║██╔══██╗██╔══╝  ██║   ██║██╔═══╝ ╚════██║
+  ██║  ██╗╚██████╔╝██████╔╝███████╗╚██████╔╝██║     ███████║
+  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝
+  Suite v1.0.0 — KubeOps & DevOps Platform (Plataforma Unificada)
+EOF
+    printf "  ${CLR_DIM}--------------------------------------------------------------------${CLR_RESET}\n\n"
+    printf "    ${CLR_BOLD_CYAN}🎯  SELECCIONAR MÓDULO O PLATAFORMA DE TRABAJO${CLR_RESET}\n\n"
+    printf "  [1] 🏗️   Aprovisionamiento y Gestión de Clústeres Kubernetes\n"
+    printf "           ${CLR_DIM}(HA, Air-Gap, Nodos, Istio, Kiali, Nexus, Observabilidad 360°, KAgent)${CLR_RESET}\n\n"
+    printf "  [2] 🔍  Auditoría y Análisis de Infraestructura DevOps (SRE Audit)\n"
+    printf "           ${CLR_DIM}(Escaneo de salud, seguridad, specs, compliance y reportes .md/.json)${CLR_RESET}\n\n"
+    printf "  [3] 🛠️   Auto-Remediación y Gestión SRE (DevOps Toolkit)\n"
+    printf "           ${CLR_DIM}(HPA, PDB, NetworkPolicies, Requests/Limits y Rollback automático)${CLR_RESET}\n\n"
+    printf "  [0] 🚪  Salir de la Plataforma\n\n"
+    printf "  ${CLR_DIM}--------------------------------------------------------------------${CLR_RESET}\n"
+    printf "  ${CLR_BOLD_WHITE}Seleccione una opción [0-3]: ${CLR_RESET}"
+}
+
+_master_selector_loop() {
+    while true; do
+        _print_master_selector
+        local choice
+        read -r choice
+        case "${choice}" in
+            1)
+                _main_loop
+                ;;
+            2)
+                clear
+                log_section "🔍 Auditoría y Análisis de Infraestructura DevOps / SRE"
+                if command -v python3 &>/dev/null; then
+                    python3 "${SUITE_ROOT}/tools/devops-audit/audit_environment.py" -o sre_audit_report -f all || true
+                    log_success "Reportes de auditoría generados exitosamente en sre_audit_report.json y sre_audit_report.md"
+                else
+                    log_error "Python 3 no está instalado en el sistema. Instálelo con: sudo apt-get install -y python3"
+                fi
+                pause
+                ;;
+            3)
+                clear
+                if [[ -f "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" ]]; then
+                    bash "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" || true
+                else
+                    log_error "DevOps Toolkit no encontrado en: ${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh"
+                    pause
+                fi
+                ;;
+            0|[qQ]|[eE][xX][iI][tT])
+                echo -e "\n  ${CLR_BOLD_GREEN}¡Hasta luego! Gracias por usar KubeOps & DevOps Platform.${CLR_RESET}\n"
+                exit 0
+                ;;
+            *)
+                printf "\n  ${CLR_BOLD_RED}Opción inválida: '%s'${CLR_RESET} — Seleccione [0-3]\n" "${choice}"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # Trap for clean exit

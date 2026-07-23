@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "timestamp": "2026-07-18T00:53:22.710739+00:00",
+    "hostname": "DESKTOP-4ND5HHJ",
+    "kernel": "11",
+    "os": "Windows-11-10.0.22631-SP0",
+    "detected_role": "Host No-Kubernetes (Externo)",
+    "detected_role_reason": "No se detectaron procesos locales de Kubernetes (kubelet o control plane)"
+  },
+  "versions": {
+    "Entorno Host (Linux)": {
+      "OS / Distribution": "Windows AMD64",
+      "Kernel": "11"
+    },
+    "Docker / Containerd": "Docker version 24.0.6, build ed223bc",
+    "Kubernetes (k8s)": "kubectl installed but no connection to cluster"
+  },
+  "inventory": {
+    "Entorno Host (Linux)": {
+      "Firewall": {
+        "UFW": "Not Installed",
+        "iptables": "Not Installed",
+        "Firewalld": "Not Installed",
+        "nftables": "Not Installed"
+      },
+      "ExposedPorts": [],
+      "UnusualPorts": []
+    },
+    "Docker / Containerd": {
+      "ServiceStatus": "inactive (stopped)",
+      "Containers": {
+        "Total": 0,
+        "Running": 0,
+        "Stopped": 0
+      },
+      "DanglingImages": {
+        "Count": 0,
+        "ReclaimableSpaceBytes": 0
+      }
+    },
+    "Kubernetes (k8s)": {},
+    "Certificados y Seguridad": {
+      "KubeadmCertificates": "No aplicable (el host no es un nodo de Control Plane. Rol detectado: Host No-Kubernetes (Externo))",
+      "SSLDomains": []
+    }
+  },
+  "findings": {
+    "critical": [
+      {
+        "category": "Entorno Host (Linux)",
+        "description": "No se detect\u00f3 ning\u00fan firewall activo (UFW, iptables, Firewalld o nftables).",
+        "detail": "El host est\u00e1 expuesto directamente sin protecci\u00f3n de filtrado a nivel de red."
+      }
+    ],
+    "warnings": [
+      {
+        "category": "Kubernetes (k8s)",
+        "description": "No se puede establecer conexi\u00f3n con el cl\u00faster Kubernetes.",
+        "detail": "E0717 20:53:25.960261   38120 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.\nE0717 20:53:28.329238   38120 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.\nE0717 20:53:30.653252   38120 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.\nE0717 20:53:32.992345   38120 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.\nE0717 20:53:35.327038   38120 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.\nUnable to connect to the server: dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it."
+      }
+    ],
+    "info": []
+  },
+  "improvements": [
+    {
+      "category": "Entorno Host (Linux)",
+      "recommendation": "Habilitar y configurar un firewall local (como UFW, iptables, firewalld o nftables) permitiendo \u00fanicamente los puertos necesarios.",
+      "impact": "Medium"
+    }
+  ]
+}
