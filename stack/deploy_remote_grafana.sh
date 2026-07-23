@@ -137,8 +137,14 @@ docker run -d \
 echo "GRAFANA_REMOTE_OK"
 REMOTE
 
+    local public_ip
+    public_ip=$(ssh ${ssh_opts} "${ssh_user}@${target_ip}" "curl -s ifconfig.me 2>/dev/null || echo ''")
+
     log_section "🎉 ¡Servidor Dedicado de Monitoreo (Grafana Central) Instalado!"
-    printf "  %-30s %s\n" "URL de Grafana Central:" "http://${target_ip}:${grafana_port}"
+    printf "  %-30s %s\n" "URL de Grafana (IP Privada):" "http://${target_ip}:${grafana_port}"
+    if [[ -n "${public_ip}" ]]; then
+        printf "  %-30s %s\n" "URL de Grafana (IP Pública):" "http://${public_ip}:${grafana_port}"
+    fi
     printf "  %-30s %s\n" "Usuario Admin:" "admin"
     printf "  %-30s %s\n" "Password Admin:" "${admin_password}"
     printf "  %-30s %s\n" "Data Source Prometheus:" "${k8s_prometheus_url}"
