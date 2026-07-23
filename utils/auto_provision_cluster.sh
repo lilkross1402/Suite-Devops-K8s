@@ -807,6 +807,15 @@ case "${CNI_PLUGIN}" in
         helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
         helm repo update cilium 2>/dev/null || true
         CLEAN_VER="${CNI_VERSION#v}"
+
+        # Extraer e instalar explícitamente las CRDs del chart para garantizar ciliumnodes.cilium.io
+        rm -rf /tmp/cilium-chart
+        helm pull cilium/cilium --version "${CLEAN_VER}" --untar --untardir /tmp/cilium-chart 2>/dev/null || true
+        if [[ -d "/tmp/cilium-chart/cilium/crds" ]]; then
+            kubectl apply -f /tmp/cilium-chart/cilium/crds/ --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            rm -rf /tmp/cilium-chart
+        fi
+
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
