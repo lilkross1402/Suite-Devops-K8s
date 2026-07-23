@@ -148,4 +148,3 @@ REMOTE
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     deploy_remote_grafana_server "$@"
 fi
-EOF
