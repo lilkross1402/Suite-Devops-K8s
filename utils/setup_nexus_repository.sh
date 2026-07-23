@@ -328,7 +328,49 @@ EOF
         sudo docker push "127.0.0.1:${docker_port}/${target_name}"
     done
 
+_ensure_offline_binaries() {
+    log_info "Verificando disponibilidad de binarios CLI (kubeadm, kubelet, kubectl, helm, cilium)..."
+    mkdir -p "${SUITE_ROOT}/offline-assets"
+
+    local k8s_ver="v1.29.15"
+    local helm_ver="v3.14.2"
+    local cilium_ver="v0.16.0"
+
+    if net_is_online; then
+        log_info "Descargando binarios de Kubernetes y herramientas CLI para almacenamiento offline en Nexus..."
+
+        # kubeadm, kubelet, kubectl
+        for bin in kubeadm kubelet kubectl; do
+            if [[ ! -f "${SUITE_ROOT}/offline-assets/${bin}" ]]; then
+                log_info "  [Download CLI] ${bin} ${k8s_ver}..."
+                curl -fsSL "https://dl.k8s.io/release/${k8s_ver}/bin/linux/amd64/${bin}" -o "${SUITE_ROOT}/offline-assets/${bin}" 2>/dev/null || true
+                chmod +x "${SUITE_ROOT}/offline-assets/${bin}" 2>/dev/null || true
+            fi
+        done
+
+        # Helm CLI
+        if [[ ! -f "${SUITE_ROOT}/offline-assets/helm" ]]; then
+            log_info "  [Download CLI] helm ${helm_ver}..."
+            curl -fsSL "https://get.helm.sh/helm-${helm_ver}-linux-amd64.tar.gz" -o "${SUITE_ROOT}/offline-assets/helm.tar.gz" 2>/dev/null || true
+            tar -xzf "${SUITE_ROOT}/offline-assets/helm.tar.gz" -C "${SUITE_ROOT}/offline-assets" linux-amd64/helm 2>/dev/null || true
+            mv "${SUITE_ROOT}/offline-assets/linux-amd64/helm" "${SUITE_ROOT}/offline-assets/helm" 2>/dev/null || true
+            rm -rf "${SUITE_ROOT}/offline-assets/linux-amd64" "${SUITE_ROOT}/offline-assets/helm.tar.gz" 2>/dev/null || true
+            chmod +x "${SUITE_ROOT}/offline-assets/helm" 2>/dev/null || true
+        fi
+
+        # Cilium CLI
+        if [[ ! -f "${SUITE_ROOT}/offline-assets/cilium" ]]; then
+            log_info "  [Download CLI] cilium ${cilium_ver}..."
+            curl -fsSL "https://github.com/cilium/cilium-cli/releases/download/${cilium_ver}/cilium-linux-amd64.tar.gz" -o "${SUITE_ROOT}/offline-assets/cilium.tar.gz" 2>/dev/null || true
+            tar -xzf "${SUITE_ROOT}/offline-assets/cilium.tar.gz" -C "${SUITE_ROOT}/offline-assets" cilium 2>/dev/null || true
+            rm -f "${SUITE_ROOT}/offline-assets/cilium.tar.gz" 2>/dev/null || true
+            chmod +x "${SUITE_ROOT}/offline-assets/cilium" 2>/dev/null || true
+        fi
+    fi
+}
+
     # 5b. Subir binarios y librerías Air-Gap (kubeadm, kubelet, kubectl, helm, cilium) a Nexus raw-hosted
+    _ensure_offline_binaries
     log_info "Inyectando binarios y librerías Air-Gap en Nexus 3 Raw Hosted Repository (repository/raw-hosted)..."
     if [[ -d "${SUITE_ROOT}/offline-assets" ]]; then
         find "${SUITE_ROOT}/offline-assets" -type f | while read -r asset; do
