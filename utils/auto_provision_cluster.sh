@@ -649,6 +649,8 @@ if command -v kubectl &>/dev/null; then
 fi
 EOF
 chmod 644 /etc/profile.d/k8s_aliases.sh
+grep -q "k8s_aliases.sh" /root/.bashrc 2>/dev/null || echo "[ -f /etc/profile.d/k8s_aliases.sh ] && source /etc/profile.d/k8s_aliases.sh" >> /root/.bashrc
+grep -q "k8s_aliases.sh" "${HOME_DIR}/.bashrc" 2>/dev/null || echo "[ -f /etc/profile.d/k8s_aliases.sh ] && source /etc/profile.d/k8s_aliases.sh" >> "${HOME_DIR}/.bashrc" 2>/dev/null || true
 
 echo "INIT_OK"
 REMOTE
@@ -719,10 +721,8 @@ REMOTE
             _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             
             local w_join_cmd="${join_cmd}"
-            # Detección dinámica de conectividad: On-Premise usa VIP; Cloud VPC usa Master IP de respaldo
-            if ! _ssh "${ssh_user}@${node}" "nc -z -w 3 ${vip_ip} 8443 2>/dev/null" &>/dev/null; then
-                w_join_cmd=$(echo "${join_cmd}" | sed -E "s|${vip_ip}:8443|${master1_ip}:6443|g; s|${master1_ip}:8443|${master1_ip}:6443|g")
-            fi
+            # Workers unen directamente al API Server primario (puerto 6443)
+            w_join_cmd=$(echo "${join_cmd}" | sed -E "s|${vip_ip}:8443|${master1_ip}:6443|g; s|${master1_ip}:8443|${master1_ip}:6443|g")
 
             log_info "    Ejecutando kubeadm join en Worker ${node}..."
             if _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" 2>&1; then
