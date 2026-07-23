@@ -325,7 +325,7 @@ EOF
         log_info "  [Inyectando a Nexus 3 UI] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
         sudo docker pull "${img}" || true
         sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
-        sudo docker push "127.0.0.1:${docker_port}/${target_name}"
+        sudo docker push "127.0.0.1:${docker_port}/${target_name}" || log_warn "Error al inyectar ${img} (se omitirá)"
     done
 
 _ensure_offline_binaries() {
