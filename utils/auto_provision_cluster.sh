@@ -704,8 +704,8 @@ cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
 chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh >/dev/null || true
 
-# Apuntar kubelet y kubectl localmente a 127.0.0.1:6443 en cada nodo del Control Plane
-sed -i 's|server: https://.*:8443|server: https://127.0.0.1:6443|g' /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME_DIR}/.kube/config" 2>/dev/null || true
+# Apuntar kubelet y kubectl al API Server principal (puerto 6443) en cada nodo del Control Plane
+sed -i "s|server: https://.*:8443|server: https://${M1}:6443|g; s|server: https://127.0.0.1:6443|server: https://${M1}:6443|g" /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME_DIR}/.kube/config" 2>/dev/null || true
 systemctl restart kubelet 2>/dev/null || true
 REMOTE
     done
