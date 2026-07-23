@@ -15,7 +15,9 @@ set -euo pipefail
 # Resolve suite root and source libraries
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 source "${SUITE_ROOT}/lib/logger.sh"
 source "${SUITE_ROOT}/lib/os_detect.sh"
@@ -1052,7 +1054,78 @@ _setup_kubeconfig() {
         -n kube-public \
         --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null || true
 
+    # 5. Configurar alias de gestión rápida
+    _setup_k8s_aliases
+
     log_success "kubeconfig activado correctamente sin requerir pasos manuales."
+}
+
+_setup_k8s_aliases() {
+    log_info "Configurando alias y autocompletado de kubectl para la gestión del clúster..."
+
+    local alias_file="/etc/profile.d/k8s_aliases.sh"
+    sudo tee "${alias_file}" > /dev/null <<'EOF'
+# KubeOps-Suite :: Kubernetes CLI Aliases & Autocompletion
+alias k='kubectl'
+alias kgp='kubectl get pods'
+alias kgpa='kubectl get pods -A'
+alias kgn='kubectl get nodes -o wide'
+alias kgs='kubectl get svc -A'
+alias kgi='kubectl get ingress -A'
+alias kdp='kubectl describe pod'
+alias kdn='kubectl describe node'
+alias kl='kubectl logs -f'
+alias kex='kubectl exec -it'
+alias kgns='kubectl get namespaces'
+alias kctx='kubectl config set-context --current --namespace'
+alias ksys='kubectl -n kube-system'
+alias kmon='kubectl -n monitoring'
+
+# Autocompletion for 'k' alias
+if command -v kubectl &>/dev/null; then
+    source <(kubectl completion bash 2>/dev/null) 2>/dev/null || true
+    complete -o default -F __start_kubectl k 2>/dev/null || true
+fi
+EOF
+
+    sudo chmod 644 "${alias_file}"
+
+    # Ensure sourced in ~/.bashrc for root and SUDO_USER
+    for b_file in "/root/.bashrc" "${HOME}/.bashrc"; do
+        if [[ -f "${b_file}" ]] && ! grep -q "k8s_aliases.sh" "${b_file}"; then
+            echo "[ -f /etc/profile.d/k8s_aliases.sh ] && source /etc/profile.d/k8s_aliases.sh" | sudo tee -a "${b_file}" >/dev/null
+        fi
+    done
+
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        local u_home
+        u_home=$(eval echo "~${SUDO_USER}")
+        if [[ -f "${u_home}/.bashrc" ]] && ! grep -q "k8s_aliases.sh" "${u_home}/.bashrc"; then
+            echo "[ -f /etc/profile.d/k8s_aliases.sh ] && source /etc/profile.d/k8s_aliases.sh" | sudo tee -a "${u_home}/.bashrc" >/dev/null
+        fi
+    fi
+
+    log_success "Alias de Kubernetes activados en /etc/profile.d/k8s_aliases.sh"
+}
+
+_print_k8s_aliases_summary() {
+    printf "\n  ${CLR_BOLD_WHITE}⚡ Alias de Teclado Creados (Para Gestión Rápida del Clúster):${CLR_RESET}\n"
+    printf "  ${CLR_DIM}┌─────────────────────────┬────────────────────────────────────────┐${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_CYAN}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "Alias (Atajo)" "Comando Real Explicado"
+    printf "  ${CLR_DIM}├─────────────────────────┼────────────────────────────────────────┤${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "k" "kubectl"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgp" "kubectl get pods"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgpa" "kubectl get pods -A (Todos los pods)"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgn" "kubectl get nodes -o wide"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgs" "kubectl get svc -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgi" "kubectl get ingress -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kl <pod>" "kubectl logs -f <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kex <pod> -- sh" "kubectl exec -it <pod> -- sh"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kdp <pod>" "kubectl describe pod <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "ksys" "kubectl -n kube-system"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kmon" "kubectl -n monitoring"
+    printf "  ${CLR_DIM}└─────────────────────────┴────────────────────────────────────────┘${CLR_RESET}\n"
+    printf "  ${CLR_DIM}Ubicación: /etc/profile.d/k8s_aliases.sh (Autocompletado 'k <TAB>' activo)${CLR_RESET}\n\n"
 }
 
 _wait_for_control_plane() {
@@ -1149,6 +1222,9 @@ _print_cluster_summary() {
         printf "    --discovery-token-ca-cert-hash sha256:${ca_hash} \\\\\n"
         printf "    --control-plane --certificate-key ${cert_key}${CLR_RESET}\n\n"
     fi
+
+    # Imprimir tabla de alias creados para el administrador
+    _print_k8s_aliases_summary
 }
 
 # ---------------------------------------------------------------------------

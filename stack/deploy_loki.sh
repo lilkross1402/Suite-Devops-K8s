@@ -7,7 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 # shellcheck disable=SC1090
 source "${SUITE_ROOT}/lib/logger.sh"
@@ -28,8 +30,21 @@ deploy_loki_stack() {
         return 1
     fi
 
+    # Ensure default StorageClass exists for PVC auto-binding
+    if ! kubectl get storageclass 2>/dev/null | grep -q "(default)"; then
+        log_info "No se detectó StorageClass por defecto. Aprovisionando StorageClass local para PV/PVC..."
+        local storage_manifest="${SUITE_ROOT}/manifests/base/storage/local-storage-provisioner.yaml"
+        if [[ -f "${storage_manifest}" ]]; then
+            kubectl apply -f "${storage_manifest}"
+            log_success "StorageClass 'local-path' aprovisionada dinámicamente."
+        fi
+    fi
+
     log_info "Aplicando manifiestos de Loki + Promtail en el namespace 'monitoring'..."
-    kubectl apply -f "${manifest}"
+    if ! kubectl apply -f "${manifest}"; then
+        log_warn "Error aplicando el manifiesto (campos inmutables en StatefulSet). Forzando reemplazo..."
+        kubectl replace --force -f "${manifest}"
+    fi
 
     log_info "Esperando disponibilidad de Loki y Promtail..."
     kubectl rollout status statefulset/loki -n monitoring --timeout=120s || true

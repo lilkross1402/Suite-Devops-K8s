@@ -8,7 +8,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 source "${SUITE_ROOT}/lib/logger.sh"
 source "${SUITE_ROOT}/lib/os_detect.sh"

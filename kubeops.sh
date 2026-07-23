@@ -17,7 +17,7 @@ set -euo pipefail
 # Resolve the suite root directory (handles symlinks)
 # ---------------------------------------------------------------------------
 SUITE_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-readonly SUITE_ROOT
+export SUITE_ROOT
 
 # ---------------------------------------------------------------------------
 # Source core libraries (order matters: logger first)
@@ -386,8 +386,8 @@ _print_menu() {
     # Stack section
     _print_menu_section "  🚀  DESPLIEGUE DEL STACK DE ECOSISTEMA"
 
-    _print_menu_item "7" "📈" "Stack de Observabilidad" \
-        "Prometheus + Grafana + Alertmanager"
+    _print_menu_item "7" "📈" "Stack de Observabilidad 360°" \
+        "Grafana + Prometheus + Loki + Promtail + Alertmanager (En 1-Clic)"
 
     _print_menu_item "8" "🦍" "API Gateway (Kong)" \
         "Kong Gateway + Ingress Controller"
@@ -406,6 +406,9 @@ _print_menu() {
 
     _print_menu_item "G" "🛡️ " "GitOps & Resiliencia (ArgoCD + Velero + Storage)" \
         "Desplegar ArgoCD HA, Velero Backups y OpenEBS/NFS Storage"
+
+    _print_menu_item "M" "🖥️ " "Servidor Monitoreo Central (Grafana Externo)" \
+        "Desplegar Grafana en servidor dedicado fuera del clúster"
 
     _print_menu_separator
 
@@ -621,6 +624,18 @@ _handle_show_gitops_resilience_menu() {
     fi
 }
 
+_handle_deploy_remote_grafana() {
+    local script="${SUITE_ROOT}/stack/deploy_remote_grafana.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        deploy_remote_grafana_server
+    else
+        log_error "Script de Grafana Remoto no encontrado: ${script}"
+    fi
+    pause
+}
+
 _handle_auto_provision_cluster() {
     local script="${SUITE_ROOT}/utils/auto_provision_cluster.sh"
     if [[ -f "${script}" ]]; then
@@ -733,6 +748,10 @@ _main_loop() {
                 clear
                 _handle_show_gitops_resilience_menu ;;
 
+            [mM])
+                clear
+                _handle_deploy_remote_grafana ;;
+
             [aA])
                 clear
                 _handle_auto_provision_cluster ;;
@@ -762,7 +781,7 @@ _main_loop() {
                 continue ;;
 
             *)
-                printf "\n  ${CLR_BOLD_RED}Invalid option: '%s'${CLR_RESET}  — Enter a number [1-9] or [S/B/L/R/Q]\n" "${choice}"
+                printf "\n  ${CLR_BOLD_RED}Invalid option: '%s'${CLR_RESET}  — Enter a option [1-9] or [A/C/S/B/L/H/N/E/G/M/R/Q]\n" "${choice}"
                 sleep 1.5
                 ;;
         esac

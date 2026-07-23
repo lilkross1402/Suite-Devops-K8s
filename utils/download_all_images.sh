@@ -8,7 +8,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 source "${SUITE_ROOT}/lib/logger.sh" 2>/dev/null || {
     log_info() { printf "\033[1;36m[INFO]\033[0m  %s\n" "$*"; }
@@ -25,10 +27,10 @@ log_section "🚀 Descarga, Organización y Carga Directa a Nexus (Puerto 8082)"
 
 declare -A CATEGORIES=(
     ["01_k8s_core"]="registry.k8s.io/kube-apiserver:v1.29.15 registry.k8s.io/kube-controller-manager:v1.29.15 registry.k8s.io/kube-scheduler:v1.29.15 registry.k8s.io/kube-proxy:v1.29.15 registry.k8s.io/etcd:3.5.12-0 registry.k8s.io/coredns/coredns:v1.11.1 registry.k8s.io/pause:3.9"
-    ["02_cni_cilium"]="quay.io/cilium/cilium:v1.15.5 quay.io/cilium/operator-generic:v1.15.5 quay.io/cilium/hubble-relay:v1.15.5 quay.io/cilium/hubble-ui:v0.12.1 quay.io/cilium/hubble-ui-backend:v0.12.1"
+    ["02_cni_plugins"]="quay.io/cilium/cilium:v1.15.5 quay.io/cilium/operator-generic:v1.15.5 quay.io/cilium/hubble-relay:v1.15.5 quay.io/cilium/hubble-ui:v0.12.1 quay.io/cilium/hubble-ui-backend:v0.12.1 docker.io/calico/cni:v3.27.0 docker.io/calico/node:v3.27.0 docker.io/calico/kube-controllers:v3.27.0 flannel/flannel:v0.24.2"
     ["03_observability"]="prom/prometheus:v2.51.0 grafana/grafana:10.4.0 prom/alertmanager:v0.27.0 grafana/loki:2.9.4 grafana/promtail:2.9.4 quay.io/prometheus-operator/prometheus-config-reloader:v0.72.0"
     ["04_mesh_ingress"]="docker.io/istio/pilot:1.21.0 docker.io/istio/proxyv2:1.21.0 quay.io/kiali/kiali:v1.80.0 kong:3.6 redis:7.2"
-    ["05_gitops_storage"]="quay.io/argoproj/argocd:v2.10.4 velero/velero:v1.13.0 quay.io/jetstack/cert-manager-controller:v1.14.4 quay.io/jetstack/cert-manager-cainjector:v1.14.4 quay.io/jetstack/cert-manager-webhook:v1.14.4 openebs/provisioner-localpv:3.5.0"
+    ["05_gitops_storage_ha"]="quay.io/argoproj/argocd:v2.10.4 velero/velero:v1.13.0 quay.io/jetstack/cert-manager-controller:v1.14.4 quay.io/jetstack/cert-manager-cainjector:v1.14.4 quay.io/jetstack/cert-manager-webhook:v1.14.4 rancher/local-path-provisioner:v0.0.26 openebs/provisioner-localpv:3.5.0 busybox:latest haproxy:2.8 osixia/keepalived:2.0.20"
 )
 
 # Render organized directory structure
@@ -50,7 +52,7 @@ echo "==> ¡Proceso finalizado con éxito!"
 EOF
 chmod +x "${BASE_DIR}/load_all.sh"
 
-for cat_folder in "01_k8s_core" "02_cni_cilium" "03_observability" "04_mesh_ingress" "05_gitops_storage"; do
+for cat_folder in "${!CATEGORIES[@]}"; do
     log_info "📂 Categoria: ${cat_folder}"
     read -ra img_list <<< "${CATEGORIES[${cat_folder}]}"
     

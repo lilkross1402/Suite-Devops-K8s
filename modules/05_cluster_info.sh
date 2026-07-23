@@ -8,7 +8,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 source "${SUITE_ROOT}/lib/logger.sh"
 source "${SUITE_ROOT}/lib/network_check.sh"
@@ -151,6 +153,26 @@ _show_join_commands() {
     fi
 }
 
+_show_k8s_aliases() {
+    log_section "⚡ Alias de Teclado Activos para Gestión Rápida"
+    printf "  ${CLR_DIM}┌─────────────────────────┬────────────────────────────────────────┐${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_CYAN}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "Alias (Atajo)" "Comando Real Explicado"
+    printf "  ${CLR_DIM}├─────────────────────────┼────────────────────────────────────────┤${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "k" "kubectl"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgp" "kubectl get pods"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgpa" "kubectl get pods -A (Todos los pods)"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgn" "kubectl get nodes -o wide"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgs" "kubectl get svc -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgi" "kubectl get ingress -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kl <pod>" "kubectl logs -f <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kex <pod> -- sh" "kubectl exec -it <pod> -- sh"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kdp <pod>" "kubectl describe pod <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "ksys" "kubectl -n kube-system"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kmon" "kubectl -n monitoring"
+    printf "  ${CLR_DIM}└─────────────────────────┴────────────────────────────────────────┘${CLR_RESET}\n"
+    printf "  ${CLR_DIM}Cargados automáticamente en /etc/profile.d/k8s_aliases.sh${CLR_RESET}\n"
+}
+
 main() {
     log_banner
     log_section "Información y Estado del Clúster"
@@ -162,6 +184,7 @@ main() {
     _show_pods
     _show_resources
     _show_join_commands
+    _show_k8s_aliases
 
     echo ""
     log_success "Reporte de estado completado exitosamente"

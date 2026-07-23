@@ -9,7 +9,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -z "${SUITE_ROOT:-}" ]]; then
+    SUITE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 # shellcheck disable=SC1090
 source "${SUITE_ROOT}/lib/logger.sh"
@@ -20,13 +22,25 @@ source "${SUITE_ROOT}/lib/state_manager.sh"
 # shellcheck disable=SC1090
 source "${SUITE_ROOT}/stack/deploy_loki.sh"
 
+# Ensure PATH and KUBECONFIG are properly set
+export PATH="${PATH}:/usr/local/bin:/usr/bin:/bin"
+if [[ -z "${KUBECONFIG:-}" ]]; then
+    if [[ -f /etc/kubernetes/admin.conf ]]; then
+        export KUBECONFIG="/etc/kubernetes/admin.conf"
+    elif [[ -f /root/.kube/config ]]; then
+        export KUBECONFIG="/root/.kube/config"
+    elif [[ -f "${HOME}/.kube/config" ]]; then
+        export KUBECONFIG="${HOME}/.kube/config"
+    fi
+fi
+
 readonly MONITORING_NS="monitoring"
 readonly PROMETHEUS_RELEASE="prometheus-stack"
 
 _ensure_namespace() {
     local ns="${1}"
-    kubectl create namespace "${ns}" --dry-run=client -o yaml | \
-        kubectl apply -f - 2>/dev/null || true
+    kubectl --kubeconfig="${KUBECONFIG}" create namespace "${ns}" --dry-run=client -o yaml | \
+        kubectl --kubeconfig="${KUBECONFIG}" apply -f - 2>/dev/null || true
     log_success "Namespace preparado: ${ns}"
 }
 
@@ -64,6 +78,7 @@ _deploy_online() {
         prometheus-community/kube-prometheus-stack \
         --namespace "${MONITORING_NS}" \
         --create-namespace \
+        --kubeconfig="${KUBECONFIG}" \
         --set prometheus.prometheusSpec.retention=30d \
         --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=20Gi \
         --set grafana.adminPassword="admin" \

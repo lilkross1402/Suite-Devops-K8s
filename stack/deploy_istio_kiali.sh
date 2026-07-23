@@ -42,6 +42,68 @@ deploy_istio_kiali() {
         log_warn "No se pudo descargar CRDs de Istio directamente desde GitHub. Asegúrese de conexión a Internet."
     }
 
+    # 1b. Crear ConfigMap 'istio' e 'istio-sidecar-injector' indispensables para Kiali
+    log_info "Creando ConfigMaps de Istio (istio, istio-sidecar-injector) en namespace istio-system..."
+    kubectl apply -n istio-system -f - <<'EOF' 2>/dev/null || true
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |
+    accessLogFile: /dev/stdout
+    enableAutoMtls: true
+    defaultConfig:
+      proxyMetadata: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-sidecar-injector
+  namespace: istio-system
+data:
+  config: |
+    policy: enabled
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kiali
+  namespace: istio-system
+data:
+  config.yaml: |
+    auth:
+      strategy: anonymous
+    external_services:
+      tracing:
+        enabled: false
+      prometheus:
+        url: "http://prometheus.istio-system:9090"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tracing
+  namespace: istio-system
+spec:
+  ports:
+  - name: http
+    port: 16686
+    targetPort: 16686
+  selector:
+    app: kiali
+EOF
+
+    # 1c. Desplegar Istio Control Plane (istiod) vía Helm o Manifests
+    if command -v helm &>/dev/null; then
+        log_info "Desplegando Istio Control Plane (istiod) vía Helm..."
+        helm repo add istio https://istio-release.storage.googleapis.com/charts 2>/dev/null || true
+        helm repo update istio 2>/dev/null || true
+        helm upgrade --install istio-base istio/base -n istio-system 2>/dev/null || true
+        helm upgrade --install istiod istio/istiod -n istio-system --set telemetry.v2.enabled=true 2>/dev/null || true
+    fi
+
     # 2. Desplegar Prometheus & Kiali Dashboard (Oficial Istio Addons)
     log_info "Desplegando Prometheus Addon para métricas de Istio (namespace: istio-system)..."
     kubectl apply -f "https://raw.githubusercontent.com/istio/istio/release-1.21/samples/addons/prometheus.yaml" 2>/dev/null || true

@@ -626,6 +626,30 @@ chmod 600 "${HOME_DIR}/.kube/config" 2>/dev/null || true
 
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" > /etc/profile.d/k8s.sh
 
+cat > /etc/profile.d/k8s_aliases.sh <<'EOF'
+# KubeOps-Suite :: Kubernetes CLI Aliases & Autocompletion
+alias k='kubectl'
+alias kgp='kubectl get pods'
+alias kgpa='kubectl get pods -A'
+alias kgn='kubectl get nodes -o wide'
+alias kgs='kubectl get svc -A'
+alias kgi='kubectl get ingress -A'
+alias kdp='kubectl describe pod'
+alias kdn='kubectl describe node'
+alias kl='kubectl logs -f'
+alias kex='kubectl exec -it'
+alias kgns='kubectl get namespaces'
+alias kctx='kubectl config set-context --current --namespace'
+alias ksys='kubectl -n kube-system'
+alias kmon='kubectl -n monitoring'
+
+if command -v kubectl &>/dev/null; then
+    source <(kubectl completion bash 2>/dev/null) 2>/dev/null || true
+    complete -o default -F __start_kubectl k 2>/dev/null || true
+fi
+EOF
+chmod 644 /etc/profile.d/k8s_aliases.sh
+
 echo "INIT_OK"
 REMOTE
     log_success "Control Plane inicializado en ${master1_ip}."
@@ -801,10 +825,29 @@ REMOTE
     printf "  %-30s %s\n" "Control Plane HA (3 nodos):" "${master_ips[*]}"
     printf "  %-30s %s\n" "Workers de Cómputo:" "${worker_ips[*]}"
     printf "\n"
+    printf "\n"
     printf "  ${CLR_BOLD_WHITE}Estado del Clúster (kubectl get nodes -o wide):${CLR_RESET}\n"
     sleep 5
     _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes -o wide --kubeconfig=/etc/kubernetes/admin.conf" || true
-    printf "\n"
+
+    printf "\n  ${CLR_BOLD_WHITE}⚡ Alias de Teclado Creados (Para Gestión Rápida del Clúster):${CLR_RESET}\n"
+    printf "  ${CLR_DIM}┌─────────────────────────┬────────────────────────────────────────┐${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_CYAN}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "Alias (Atajo)" "Comando Real Explicado"
+    printf "  ${CLR_DIM}├─────────────────────────┼────────────────────────────────────────┤${CLR_RESET}\n"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "k" "kubectl"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgp" "kubectl get pods"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgpa" "kubectl get pods -A (Todos los pods)"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgn" "kubectl get nodes -o wide"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgs" "kubectl get svc -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kgi" "kubectl get ingress -A"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kl <pod>" "kubectl logs -f <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kex <pod> -- sh" "kubectl exec -it <pod> -- sh"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kdp <pod>" "kubectl describe pod <pod>"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "ksys" "kubectl -n kube-system"
+    printf "  ${CLR_DIM}│${CLR_RESET} ${CLR_BOLD_YELLOW}%-23s${CLR_RESET} ${CLR_DIM}│${CLR_RESET} %-38s ${CLR_DIM}│${CLR_RESET}\n" "kmon" "kubectl -n monitoring"
+    printf "  ${CLR_DIM}└─────────────────────────┴────────────────────────────────────────┘${CLR_RESET}\n"
+    printf "  ${CLR_DIM}Ubicación: /etc/profile.d/k8s_aliases.sh (Autocompletado 'k <TAB>' activo)${CLR_RESET}\n\n"
+
     read -rp "  Presione [Enter] para volver al menú principal..." dummy
 }
 

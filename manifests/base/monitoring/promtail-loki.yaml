@@ -57,6 +57,9 @@ data:
           replication_factor: 1
       chunk_idle_period: 15m
       chunk_retain_period: 30s
+      wal:
+        enabled: true
+        dir: /loki/wal
     schema_config:
       configs:
         - from: 2020-05-15
@@ -73,6 +76,9 @@ data:
         shared_store: filesystem
       filesystem:
         directory: /loki/chunks
+    compactor:
+      working_directory: /loki/compactor
+      shared_store: filesystem
     limits_config:
       enforce_metric_name: false
       reject_old_samples: true
@@ -94,6 +100,13 @@ spec:
       labels:
         app: loki
     spec:
+      initContainers:
+        - name: chmod-storage
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /loki/index /loki/cache /loki/chunks /loki/compactor /loki/wal && chmod -R 777 /loki"]
+          volumeMounts:
+            - name: storage
+              mountPath: /loki
       containers:
         - name: loki
           image: grafana/loki:2.9.4
@@ -115,6 +128,7 @@ spec:
     - metadata:
         name: storage
       spec:
+        storageClassName: local-path
         accessModes: [ "ReadWriteOnce" ]
         resources:
           requests:
