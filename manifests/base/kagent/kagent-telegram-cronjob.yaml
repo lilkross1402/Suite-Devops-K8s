@@ -35,7 +35,7 @@ spec:
               PREV_STATE=$(kubectl get cm kagent-monitor-state -n kagent -o jsonpath='{.data.state}' 2>/dev/null)
               
               UNHEALTHY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -v ' Ready ' | awk '{print $1 " (Estado: " $2 ")"}')
-              UNHEALTHY_PODS=$(kubectl get pods -A -o jsonpath='{range .items[?(@.status.phase!="Running")]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | grep -v 'Completed\|Succeeded')
+              UNHEALTHY_PODS=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error" | awk '{print $1 " " $2 " " $4}')
               
               CURRENT_FAILURES=""
               
