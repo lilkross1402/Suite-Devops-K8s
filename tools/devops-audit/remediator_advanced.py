@@ -233,7 +233,7 @@ def apply_or_dryrun(yaml_content, label, dry_run=False, auto_approve=False, modu
 
 def kubectl_patch(kind, name, namespace, patch_json, dry_run=False, auto_approve=False, module=""):
     """Aplica un patch estratégico a un recurso."""
-    cmd_str = f"kubectl patch {kind} {name} -n {namespace} --type=strategic-merge -p '{patch_json}'"
+    cmd_str = f"kubectl patch {kind} {name} -n {namespace} --type=strategic -p '{patch_json}'"
 
     if dry_run:
         dryrun(cmd_str)
@@ -247,7 +247,7 @@ def kubectl_patch(kind, name, namespace, patch_json, dry_run=False, auto_approve
 
     stdout, stderr, code = run_kubectl(
         ["patch", kind, name, "-n", namespace,
-         "--type=strategic-merge", f"--patch={patch_json}"], timeout=20
+         "--type=strategic", f"--patch={patch_json}"], timeout=20
     )
     if code == 0:
         ok(f"Parchado: {kind}/{name} en {namespace}")
