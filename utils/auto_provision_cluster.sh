@@ -687,7 +687,7 @@ REMOTE
     for ((i=1; i<${#master_ips[@]}; i++)); do
         local node="${master_ips[$i]}"
         log_info "  Verificando Control Plane ${node}..."
-        if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
+        if ! _ssh "${ssh_user}@${node}" "test -f /etc/kubernetes/kubelet.conf" 2>/dev/null; then
             log_info "  Uniendo Control Plane ${node} al clúster..."
             _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
@@ -716,7 +716,7 @@ REMOTE
     log_info "  Uniendo Nodos Workers al Clúster..."
     for node in "${worker_ips[@]}"; do
         log_info "  Verificando Worker ${node}..."
-        if ! _ssh "${ssh_user}@${master1_ip}" "sudo kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf" 2>/dev/null | grep -q "${node}"; then
+        if ! _ssh "${ssh_user}@${node}" "test -f /etc/kubernetes/kubelet.conf" 2>/dev/null; then
             log_info "  Uniendo Worker ${node} al clúster..."
             _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             
