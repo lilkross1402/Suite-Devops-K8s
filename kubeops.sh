@@ -967,10 +967,27 @@ _master_selector_loop() {
                 if command -v python3 &>/dev/null; then
                     python3 "${SUITE_ROOT}/tools/devops-audit/audit_environment.py" -o sre_audit_report -f all || true
                     log_success "Reportes de auditoría generados exitosamente en sre_audit_report.json y sre_audit_report.md"
+
+                    log_section "📊 Resumen en Vivo de Hallazgos Remediables en el Clúster"
+                    python3 "${SUITE_ROOT}/tools/devops-audit/remediator_advanced.py" --scan 2>/dev/null || true
+
+                    printf "\n"
+                    read -rp "  ¿Desea proceder a remediar estos hallazgos de una vez (Opción 3)? [y/N]: " rem_answer
+                    if [[ "${rem_answer,,}" == "y" || "${rem_answer,,}" == "yes" || "${rem_answer,,}" == "s" || "${rem_answer,,}" == "si" ]]; then
+                        clear
+                        if [[ -f "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" ]]; then
+                            bash "${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh" || true
+                        else
+                            log_error "DevOps Toolkit no encontrado en: ${SUITE_ROOT}/tools/devops-audit/devops_toolkit.sh"
+                            pause
+                        fi
+                    else
+                        pause
+                    fi
                 else
                     log_error "Python 3 no está instalado en el sistema. Instálelo con: sudo apt-get install -y python3"
+                    pause
                 fi
-                pause
                 ;;
             3)
                 clear
