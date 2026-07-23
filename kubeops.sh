@@ -410,6 +410,9 @@ _print_menu() {
     _print_menu_item "M" "🖥️ " "Servidor Monitoreo Central (Grafana Externo)" \
         "Desplegar Grafana en servidor dedicado fuera del clúster"
 
+    _print_menu_item "K" "🤖" "Plataforma AI KAgent (Auto-Remediación)" \
+        "IA Local (Ollama) + Control de Pods + Alertas Telegram"
+
     _print_menu_separator
 
     # Utilities section
@@ -636,6 +639,18 @@ _handle_deploy_remote_grafana() {
     pause
 }
 
+_handle_deploy_kagent() {
+    local script="${SUITE_ROOT}/stack/deploy_kagent.sh"
+    if [[ -f "${script}" ]]; then
+        # shellcheck disable=SC1090
+        source "${script}"
+        deploy_kagent_platform
+    else
+        log_error "Script de KAgent no encontrado: ${script}"
+    fi
+    pause
+}
+
 _handle_auto_provision_cluster() {
     local script="${SUITE_ROOT}/utils/auto_provision_cluster.sh"
     if [[ -f "${script}" ]]; then
@@ -751,6 +766,10 @@ _main_loop() {
             [mM])
                 clear
                 _handle_deploy_remote_grafana ;;
+
+            [kK])
+                clear
+                _handle_deploy_kagent ;;
 
             [aA])
                 clear

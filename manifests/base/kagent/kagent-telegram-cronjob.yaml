@@ -1,0 +1,98 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kagent-telegram-monitor
+  namespace: kagent
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: kagent-tools
+          restartPolicy: OnFailure
+          containers:
+          - name: monitor
+            image: bitnami/kubectl:latest
+            env:
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kagent-telegram-secret
+                  key: TELEGRAM_BOT_TOKEN
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kagent-telegram-secret
+                  key: TELEGRAM_CHAT_ID
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "=== Monitoreo Autónomo y Auto-Remediación KAgent - $(date) ==="
+              
+              PREV_STATE=$(kubectl get cm kagent-monitor-state -n kagent -o jsonpath='{.data.state}' 2>/dev/null)
+              
+              UNHEALTHY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -v ' Ready ' | awk '{print $1 " (Estado: " $2 ")"}')
+              UNHEALTHY_PODS=$(kubectl get pods -A -o jsonpath='{range .items[?(@.status.phase!="Running")]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' | grep -v 'Completed\|Succeeded')
+              
+              CURRENT_FAILURES=""
+              
+              # Nodos No Saludables
+              if [ -n "$UNHEALTHY_NODES" ]; then
+                while read -r node_line; do
+                  [ -z "$node_line" ] && continue
+                  NODE_NAME=$(echo "$node_line" | awk '{print $1}')
+                  KEY="NODE:${NODE_NAME}"
+                  CURRENT_FAILURES="${CURRENT_FAILURES}${KEY}
+              "
+                  if ! echo "$PREV_STATE" | grep -q "$KEY"; then
+                    MSG="🚨 *ALERTA KAGENT: NODO CAÍDO DETECTADO*%0A%0A• *Nodo:* \`${node_line}\`%0A%0A🛠️ *Acción:* Registrando falla y monitoreando reconexión..."
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=${MSG}" -d "parse_mode=Markdown"
+                  fi
+                done <<EOF
+              $UNHEALTHY_NODES
+              EOF
+              fi
+              
+              # Pods No Saludables y Auto-Remediación
+              if [ -n "$UNHEALTHY_PODS" ]; then
+                while read -r line; do
+                  [ -z "$line" ] && continue
+                  NS=$(echo "$line" | awk '{print $1}')
+                  POD=$(echo "$line" | awk '{print $2}')
+                  STATUS=$(echo "$line" | awk '{print $3}')
+                  KEY="POD:${NS}:${POD}"
+                  CURRENT_FAILURES="${CURRENT_FAILURES}${KEY}
+              "
+                  if ! echo "$PREV_STATE" | grep -q "$KEY"; then
+                    MSG="🚨 *ALERTA KAGENT: POD EN FALLO DETECTADO*%0A%0A• *Pod:* \`${POD}\` en \`${NS}\`%0A• *Estado:* \`${STATUS}\`%0A%0A🛠️ *Auto-Remediación:* Recreando pod para restaurar el servicio..."
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=${MSG}" -d "parse_mode=Markdown"
+                    
+                    kubectl delete pod "$POD" -n "$NS" --grace-period=0 --force 2>/dev/null
+                  fi
+                done <<EOF
+              $UNHEALTHY_PODS
+              EOF
+              fi
+              
+              # Detección de Recursos Recuperados (READY)
+              if [ -n "$PREV_STATE" ]; then
+                echo "$PREV_STATE" | while read -r prev_key; do
+                  [ -z "$prev_key" ] && continue
+                  if ! echo "$CURRENT_FAILURES" | grep -q "$prev_key"; then
+                    if echo "$prev_key" | grep -q "NODE:"; then
+                      NODE_NAME=$(echo "$prev_key" | cut -d: -f2)
+                      MSG="✅ *KAGENT RESOLUCIÓN: NODO RECUPERADO*%0A%0A• El nodo \`${NODE_NAME}\` se ha restablecido y ya está *READY* y operativo."
+                    elif echo "$prev_key" | grep -q "POD:"; then
+                      NS=$(echo "$prev_key" | cut -d: -f2)
+                      POD_NAME=$(echo "$prev_key" | cut -d: -f3)
+                      MSG="✅ *KAGENT RESOLUCIÓN: POD RECUPERADO*%0A%0A• El pod \`${POD_NAME}\` en \`${NS}\` se ha recuperado con éxito y ya está *READY* (Running)."
+                    fi
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" -d "text=${MSG}" -d "parse_mode=Markdown"
+                  fi
+                done
+              fi
+              
+              kubectl create configmap kagent-monitor-state -n kagent --from-literal=state="$CURRENT_FAILURES" --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
