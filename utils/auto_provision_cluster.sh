@@ -809,6 +809,18 @@ case "${CNI_PLUGIN}" in
         helm repo update cilium 2>/dev/null || true
         CLEAN_VER="${CNI_VERSION#v}"
 
+        # Limpiar recursos huérfanos (de kubectl apply previo) si Helm no tiene el release registrado
+        if ! helm status cilium -n kube-system --kubeconfig=/tmp/admin-local.conf &>/dev/null; then
+            echo "Asegurando entorno limpio para Helm..."
+            kubectl delete serviceaccount cilium cilium-operator -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete clusterrole cilium cilium-operator --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete clusterrolebinding cilium cilium-operator --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete configmap cilium-config -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete secret cilium-cni-configuration -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete daemonset cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+            kubectl delete deployment cilium-operator -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        fi
+
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
