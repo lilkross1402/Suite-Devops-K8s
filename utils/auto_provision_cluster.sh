@@ -716,27 +716,8 @@ REMOTE
     log_info "  Uniendo Nodos Workers al Clúster..."
     for node in "${worker_ips[@]}"; do
         log_info "  Verificando Worker ${node}..."
-        if ! _ssh "${ssh_user}@${node}" "test -f /etc/kubernetes/kubelet.conf" 2>/dev/null; then
-            log_info "  Uniendo Worker ${node} al clúster..."
-            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
-            
-            local w_join_cmd="${join_cmd}"
-            # Workers unen directamente al API Server primario (puerto 6443)
-            w_join_cmd=$(echo "${join_cmd}" | sed -E "s|${vip_ip}:8443|${master1_ip}:6443|g; s|${master1_ip}:8443|${master1_ip}:6443|g")
 
-            log_info "    Ejecutando kubeadm join en Worker ${node}..."
-            if _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" 2>&1; then
-                log_success "  Worker ${node} unido exitosamente al clúster."
-            else
-                log_warn "  Primer intento de unión falló en Worker ${node} — Reintentando con reset limpio..."
-                _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/* /var/lib/kubelet/* /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 3"
-                _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd} --ignore-preflight-errors=all" || log_error "Fallo al unir Worker ${node}"
-            fi
-        else
-            log_info "  Worker ${node} ya está unido activamente al clúster."
-        fi
-
-        # Persistencia de ruta ante reinicios / cambios de tipo de instancia EC2
+        # Persistencia de ruta ante reinicios / cambios de tipo de instancia EC2 (APLICAR ANTES DE UNIR)
         _ssh "${ssh_user}@${node}" sudo bash -s -- "${vip_ip}" "${master1_ip}" <<'REMOTE'
 set -euo pipefail
 VIP="${1}"; M1="${2}"
@@ -763,6 +744,26 @@ EOF
     systemctl restart kubelet 2>/dev/null || true
 fi
 REMOTE
+
+        if ! _ssh "${ssh_user}@${node}" "test -f /etc/kubernetes/kubelet.conf" 2>/dev/null; then
+            log_info "  Uniendo Worker ${node} al clúster..."
+            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
+            
+            local w_join_cmd="${join_cmd}"
+            # Workers unen directamente al API Server primario (puerto 6443)
+            w_join_cmd=$(echo "${join_cmd}" | sed -E "s|${vip_ip}:8443|${master1_ip}:6443|g; s|${master1_ip}:8443|${master1_ip}:6443|g")
+
+            log_info "    Ejecutando kubeadm join en Worker ${node}..."
+            if _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" 2>&1; then
+                log_success "  Worker ${node} unido exitosamente al clúster."
+            else
+                log_warn "  Primer intento de unión falló en Worker ${node} — Reintentando con reset limpio..."
+                _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/* /var/lib/kubelet/* /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 3"
+                _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd} --ignore-preflight-errors=all" || log_error "Fallo al unir Worker ${node}"
+            fi
+        else
+            log_info "  Worker ${node} ya está unido activamente al clúster."
+        fi
     done
 
     # ── PASO 7/6: Instalar Plugin de Red (CNI) en el Clúster HA Completo ────
@@ -808,23 +809,15 @@ case "${CNI_PLUGIN}" in
         helm repo update cilium 2>/dev/null || true
         CLEAN_VER="${CNI_VERSION#v}"
 
-        # Renderizar e instalar explícitamente las CRDs de Cilium (ciliumnodes.cilium.io, etc.)
-        helm template cilium cilium/cilium --version "${CLEAN_VER}" --namespace kube-system --set installCRDs=true | kubectl apply -f - --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
             --set installCRDs=true \
+            --set ipam.mode=kubernetes \
             --set kubeProxyReplacement=true \
             --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
-            --set operator.replicas=1 \
-            --set operator.tolerations[0].key="node-role.kubernetes.io/control-plane" \
-            --set operator.tolerations[0].operator="Exists" \
-            --set operator.tolerations[0].effect="NoSchedule" \
-            --set operator.tolerations[1].key="node-role.kubernetes.io/master" \
-            --set operator.tolerations[1].operator="Exists" \
-            --set operator.tolerations[1].effect="NoSchedule" \
+            --set operator.replicas=2 \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
 
         # Ensure all control planes remain untainted after installation
