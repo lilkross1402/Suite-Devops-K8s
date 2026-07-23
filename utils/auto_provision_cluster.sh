@@ -796,6 +796,10 @@ fi
 
 case "${CNI_PLUGIN}" in
   cilium)
+    # Untaint control plane nodes prior to installation so operator and coredns schedule immediately
+    kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+    kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+
     if ! command -v helm &>/dev/null; then
         curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash 2>/dev/null || true
     fi
@@ -818,9 +822,6 @@ case "${CNI_PLUGIN}" in
             --set operator.tolerations[1].operator="Exists" \
             --set operator.tolerations[1].effect="NoSchedule" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
-
-        kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-        kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
     else
         kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
     fi
