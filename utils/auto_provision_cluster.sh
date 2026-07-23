@@ -719,10 +719,7 @@ REMOTE
             _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
             
             local w_join_cmd="${join_cmd}"
-            if ! _ssh "${ssh_user}@${node}" "nc -z -w 3 ${vip_ip} 8443 2>/dev/null" &>/dev/null; then
-                log_info "    Worker ${node} cruza subredes AWS VPC. Aplicando servicio de persistencia DNAT reboot..."
-                w_join_cmd=$(echo "${join_cmd}" | sed "s|${vip_ip}:8443|${master1_ip}:8443|g")
-            fi
+            w_join_cmd=$(echo "${join_cmd}" | sed -E "s|${vip_ip}:8443|${master1_ip}:6443|g; s|${master1_ip}:8443|${master1_ip}:6443|g")
             _ssh "${ssh_user}@${node}" "sudo ${w_join_cmd}" || true
         else
             log_info "  Worker ${node} ya está unido activamente. Asegurando persistencia de ruta..."
