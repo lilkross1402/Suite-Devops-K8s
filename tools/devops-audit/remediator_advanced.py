@@ -266,7 +266,7 @@ def backup_resource(kind, name, namespace, backup_dir="./backups"):
         args += ["-n", namespace]
     stdout, _, code = run_kubectl(args, timeout=15)
     if code == 0 and stdout:
-        ts_str = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
         fname  = os.path.join(backup_dir, f"{namespace}_{kind}_{name}_{ts_str}.yaml")
         with open(fname, "w", encoding="utf-8") as f:
             f.write(stdout)
