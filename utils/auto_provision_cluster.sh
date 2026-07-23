@@ -803,6 +803,7 @@ case "${CNI_PLUGIN}" in
         helm repo add cilium https://helm.cilium.io/ 2>/dev/null || true
         helm repo update cilium 2>/dev/null || true
         CLEAN_VER="${CNI_VERSION#v}"
+        kubectl apply -f "https://raw.githubusercontent.com/cilium/cilium/v${CLEAN_VER}/pkg/k8s/apis/cilium.io/v2/crds.yaml" --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
