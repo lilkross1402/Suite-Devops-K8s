@@ -86,11 +86,15 @@ _phase1_install_prereqs() {
     local node="${1}"
     local k8s_ver="${2:-1.29}"
     local k8s_ver_full="${3:-1.29.15}"
+    local nexus_h="${4:-}"
+    local nexus_p="${5:-8082}"
     log_info "  [${node}] Instalando prerequisitos (containerd, kubeadm v${k8s_ver_full}, kubelet, kubectl)..."
-    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${k8s_ver}" "${k8s_ver_full}" <<'REMOTE'
+    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${k8s_ver}" "${k8s_ver_full}" "${nexus_h}" "${nexus_p}" <<'REMOTE'
 set -euo pipefail
 K8S_VERSION="${1:-1.29}"
 K8S_VERSION_FULL="${2:-1.29.15}"
+NEXUS_HOST="${3:-}"
+NEXUS_PORT="${4:-8082}"
 
 # 1. OS Detection
 OS_ID="ubuntu"
@@ -185,6 +189,32 @@ esac
 mkdir -p /etc/containerd
 containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' >/etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|g' /etc/containerd/config.toml
+
+if [[ -n "${NEXUS_HOST}" ]]; then
+    mkdir -p "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}"
+    cat > "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}/hosts.toml" <<EOF
+server = "http://${NEXUS_HOST}:${NEXUS_PORT}"
+
+[host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+
+    for reg in docker.io quay.io registry.k8s.io ghcr.io gcr.io; do
+        mkdir -p "/etc/containerd/certs.d/${reg}"
+        cat > "/etc/containerd/certs.d/${reg}/hosts.toml" <<EOF
+server = "https://${reg}"
+
+[host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+
+[host."https://${reg}"]
+  capabilities = ["pull", "resolve"]
+EOF
+    done
+fi
 
 cat >/etc/crictl.yaml <<EOF
 runtime-endpoint: unix:///var/run/containerd/containerd.sock
@@ -545,7 +575,7 @@ auto_provision_ha_cluster() {
     log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en paralelo en todos los nodos..."
     pids=()
     for node in "${all_nodes[@]}"; do
-        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" &
+        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" "${nexus_host}" "${nexus_docker_port}" &
         pids+=($!)
     done
     for pid in "${pids[@]}"; do
