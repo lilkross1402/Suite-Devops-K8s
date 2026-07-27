@@ -779,7 +779,7 @@ sed -i "s|https://.*:8443|https://${M1_IP}:6443|g" /tmp/admin-local.conf
 export KUBECONFIG=/tmp/admin-local.conf
 
 if [[ "${MODE}" == "airgap" ]]; then
-    log_info "Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
+    echo "[INFO] Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
     OFFLINE_MANIFEST=$(find /home/${SUDO_USER:-ubuntu}/kubeops-suite/offline-assets /root/kubeops-suite/offline-assets -name "${CNI_PLUGIN}*.yaml" -o -name "calico.yaml" -o -name "kube-flannel.yml" 2>/dev/null | head -1 || echo "")
     if [[ -n "${OFFLINE_MANIFEST}" && -f "${OFFLINE_MANIFEST}" ]]; then
         if [[ -n "${NEXUS_IP}" ]]; then
