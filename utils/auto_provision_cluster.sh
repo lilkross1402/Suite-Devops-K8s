@@ -796,6 +796,8 @@ if [[ "${MODE}" == "airgap" ]]; then
         else
             kubectl apply -f "${OFFLINE_MANIFEST}" --kubeconfig=/tmp/admin-local.conf
         fi
+        kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         echo "CNI_AIRGAP_OK"
         exit 0
     fi
@@ -852,9 +854,9 @@ case "${CNI_PLUGIN}" in
             "${HELM_NEXUS_FLAGS[@]}" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
 
-        # Ensure all control planes remain untainted after installation
-        kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-        kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        # Re-apply control plane taint (NoSchedule) to ensure application workloads do not schedule on masters
+        kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
 
         # Trigger immediate refresh of Cilium agent pods across all nodes
         kubectl rollout restart daemonset/cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
@@ -874,6 +876,8 @@ case "${CNI_PLUGIN}" in
         "https://github.com/flannel-io/flannel/releases/download/v${CNI_VERSION}/kube-flannel.yml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
     ;;
 esac
+kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
 rm -f /tmp/admin-local.conf
 echo "CNI_OK"
 REMOTE
