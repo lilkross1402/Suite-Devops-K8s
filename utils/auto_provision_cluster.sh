@@ -838,7 +838,9 @@ case "${CNI_PLUGIN}" in
         if [[ -n "${NEXUS_IP}" ]]; then
             HELM_NEXUS_FLAGS+=(
                 "--set" "image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/cilium"
-                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator-generic"
+                "--set" "image.useDigest=false"
+                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator"
+                "--set" "operator.image.useDigest=false"
             )
         fi
 
@@ -851,6 +853,8 @@ case "${CNI_PLUGIN}" in
             --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
             --set operator.replicas=2 \
+            --set image.useDigest=false \
+            --set operator.image.useDigest=false \
             "${HELM_NEXUS_FLAGS[@]}" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
 
