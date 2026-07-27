@@ -577,9 +577,9 @@ auto_provision_ha_cluster() {
 
     # ── PASO 5/6: kubeadm init en Máster 1 ──────────────────────────────────
     log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip} (K8s v${k8s_version_full})..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" <<'REMOTE'
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
 set -euo pipefail
-VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"
+VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"; NEXUS_IP="${6:-}"; NEXUS_PORT="${7:-8082}"
 mkdir -p "${HOME}/.kube"
 
 # Ensure containerd CRI plugin is active
@@ -600,6 +600,11 @@ if [[ -f /etc/kubernetes/admin.conf ]]; then
     fi
 fi
 
+INIT_ARGS=()
+if [[ -n "${NEXUS_IP}" ]]; then
+    INIT_ARGS+=("--image-repository=${NEXUS_IP}:${NEXUS_PORT}")
+fi
+
 if [[ ! -f /etc/kubernetes/admin.conf ]]; then
     kubeadm init \
         --control-plane-endpoint "${VIP}:8443" \
@@ -608,6 +613,7 @@ if [[ ! -f /etc/kubernetes/admin.conf ]]; then
         --service-cidr="${SVC_CIDR}" \
         --skip-phases=addon/kube-proxy \
         --kubernetes-version="${K8S_VER}" \
+        "${INIT_ARGS[@]}" \
         2>&1
 fi
 
@@ -826,6 +832,14 @@ case "${CNI_PLUGIN}" in
             kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l k8s-app=cilium -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         fi
 
+        HELM_NEXUS_FLAGS=()
+        if [[ -n "${NEXUS_IP}" ]]; then
+            HELM_NEXUS_FLAGS+=(
+                "--set" "image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/cilium"
+                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator-generic"
+            )
+        fi
+
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
@@ -835,6 +849,7 @@ case "${CNI_PLUGIN}" in
             --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
             --set operator.replicas=2 \
+            "${HELM_NEXUS_FLAGS[@]}" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
 
         # Ensure all control planes remain untainted after installation
