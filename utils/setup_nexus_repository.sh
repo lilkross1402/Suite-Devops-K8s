@@ -245,17 +245,18 @@ setup_nexus_server() {
     fi
 
     # 2. Habilitar Realms de Seguridad para Docker en Nexus
-    # NexusAuthorizingRealm es OBLIGATORIO para que el Docker login no devuelva 403
-    log_info "Habilitando Realms de seguridad (NexusAuthenticatingRealm + NexusAuthorizingRealm + DockerToken)..."
+    # NOTA: En Nexus 3, el realm de autorización se llama internamente de otra forma.
+    # Solo se necesitan NexusAuthenticatingRealm y DockerToken para que docker login funcione.
+    log_info "Habilitando Realms de seguridad (NexusAuthenticatingRealm + DockerToken)..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d '["NexusAuthenticatingRealm", "NexusAuthorizingRealm", "DockerToken"]' \
+        -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
     # Habilitar acceso anónimo para que los nodos del clúster puedan hacer pull sin credenciales
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d '{"enabled": true, "userId": "anonymous", "realmName": "NexusAuthorizingRealm"}' \
+        -d '{"enabled": true}' \
         "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
 
     # 3. Crear Repositorio Nativo 'docker-hosted' en Nexus en puerto 8082
