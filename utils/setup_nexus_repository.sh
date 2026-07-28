@@ -224,6 +224,26 @@ setup_nexus_server() {
     done
     log_success "Servidor Nexus 3 Enterprise activo en el puerto ${nexus_port}."
 
+    log_info "Verificando credenciales iniciales de Nexus..."
+    local count=0
+    until sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null || [[ $count -ge 10 ]]; do
+        sleep 3
+        count=$((count + 1))
+    done
+
+    if sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null; then
+        local init_pass
+        init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null | tr -d '\r\n ')
+        log_info "Fijando contraseña de administrador a '${admin_password}'..."
+        sudo docker exec nexus curl -s -X PUT -u "admin:${init_pass}" \
+            -H "Content-Type: text/plain" \
+            -d "${admin_password}" \
+            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
+        log_success "Contraseña de Nexus 3 actualizada a '${admin_password}'."
+    else
+        log_info "Credenciales de Nexus 3 ya inicializadas activas ('${admin_password}')."
+    fi
+
     # Aceptar EULA de Nexus 3 CE via REST API (requerido en Nexus >= 3.70 / 3.94+)
     # IMPORTANTE: nexus.onboarding.enabled=false NO desactiva el EULA en 3.94+.
     # El endpoint /v1/system/eula requiere el disclaimer EXACTO del GET para que el POST sea válido.
@@ -253,26 +273,6 @@ except urllib.error.HTTPError as e:
 except Exception as e:
     print('[WARN]  EULA error:', str(e), file=sys.stderr)
 " || true
-
-    log_info "Verificando credenciales iniciales de Nexus..."
-    local count=0
-    until sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null || [[ $count -ge 10 ]]; do
-        sleep 3
-        count=$((count + 1))
-    done
-
-    if sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null; then
-        local init_pass
-        init_pass=$(sudo docker exec nexus cat /nexus-data/admin.password 2>/dev/null | tr -d '\r\n ')
-        log_info "Fijando contraseña de administrador a '${admin_password}'..."
-        sudo docker exec nexus curl -s -X PUT -u "admin:${init_pass}" \
-            -H "Content-Type: text/plain" \
-            -d "${admin_password}" \
-            "http://localhost:8081/service/rest/v1/security/users/admin/change-password" 2>/dev/null || true
-        log_success "Contraseña de Nexus 3 actualizada a '${admin_password}'."
-    else
-        log_info "Credenciales de Nexus 3 ya inicializadas activas ('${admin_password}')."
-    fi
 
     # 2. Habilitar Realms de Seguridad para Docker en Nexus
     # NOTA: En Nexus 3, el realm de autorización se llama internamente de otra forma.
