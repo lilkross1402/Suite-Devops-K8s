@@ -86,11 +86,15 @@ _phase1_install_prereqs() {
     local node="${1}"
     local k8s_ver="${2:-1.29}"
     local k8s_ver_full="${3:-1.29.15}"
+    local nexus_h="${4:-}"
+    local nexus_p="${5:-8082}"
     log_info "  [${node}] Instalando prerequisitos (containerd, kubeadm v${k8s_ver_full}, kubelet, kubectl)..."
-    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${k8s_ver}" "${k8s_ver_full}" <<'REMOTE'
+    _ssh "${SSH_USER}@${node}" sudo bash -s -- "${k8s_ver}" "${k8s_ver_full}" "${nexus_h}" "${nexus_p}" <<'REMOTE'
 set -euo pipefail
 K8S_VERSION="${1:-1.29}"
 K8S_VERSION_FULL="${2:-1.29.15}"
+NEXUS_HOST="${3:-}"
+NEXUS_PORT="${4:-8082}"
 
 # 1. OS Detection
 OS_ID="ubuntu"
@@ -185,6 +189,32 @@ esac
 mkdir -p /etc/containerd
 containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' >/etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|g' /etc/containerd/config.toml
+
+if [[ -n "${NEXUS_HOST}" ]]; then
+    mkdir -p "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}"
+    cat > "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}/hosts.toml" <<EOF
+server = "http://${NEXUS_HOST}:${NEXUS_PORT}"
+
+[host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+
+    for reg in docker.io quay.io registry.k8s.io ghcr.io gcr.io; do
+        mkdir -p "/etc/containerd/certs.d/${reg}"
+        cat > "/etc/containerd/certs.d/${reg}/hosts.toml" <<EOF
+server = "https://${reg}"
+
+[host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+
+[host."https://${reg}"]
+  capabilities = ["pull", "resolve"]
+EOF
+    done
+fi
 
 cat >/etc/crictl.yaml <<EOF
 runtime-endpoint: unix:///var/run/containerd/containerd.sock
@@ -545,7 +575,7 @@ auto_provision_ha_cluster() {
     log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en paralelo en todos los nodos..."
     pids=()
     for node in "${all_nodes[@]}"; do
-        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" &
+        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" "${nexus_host}" "${nexus_docker_port}" &
         pids+=($!)
     done
     for pid in "${pids[@]}"; do
@@ -577,9 +607,9 @@ auto_provision_ha_cluster() {
 
     # ── PASO 5/6: kubeadm init en Máster 1 ──────────────────────────────────
     log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip} (K8s v${k8s_version_full})..."
-    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" <<'REMOTE'
+    _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
 set -euo pipefail
-VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"
+VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"; NEXUS_IP="${6:-}"; NEXUS_PORT="${7:-8082}"
 mkdir -p "${HOME}/.kube"
 
 # Ensure containerd CRI plugin is active
@@ -600,6 +630,11 @@ if [[ -f /etc/kubernetes/admin.conf ]]; then
     fi
 fi
 
+INIT_ARGS=()
+if [[ -n "${NEXUS_IP}" ]]; then
+    INIT_ARGS+=("--image-repository=${NEXUS_IP}:${NEXUS_PORT}")
+fi
+
 if [[ ! -f /etc/kubernetes/admin.conf ]]; then
     kubeadm init \
         --control-plane-endpoint "${VIP}:8443" \
@@ -608,6 +643,7 @@ if [[ ! -f /etc/kubernetes/admin.conf ]]; then
         --service-cidr="${SVC_CIDR}" \
         --skip-phases=addon/kube-proxy \
         --kubernetes-version="${K8S_VER}" \
+        "${INIT_ARGS[@]}" \
         2>&1
 fi
 
@@ -779,7 +815,7 @@ sed -i "s|https://.*:8443|https://${M1_IP}:6443|g" /tmp/admin-local.conf
 export KUBECONFIG=/tmp/admin-local.conf
 
 if [[ "${MODE}" == "airgap" ]]; then
-    log_info "Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
+    echo "[INFO] Instalando CNI ${CNI_PLUGIN} en modo AIR-GAP desde manifiestos locales..."
     OFFLINE_MANIFEST=$(find /home/${SUDO_USER:-ubuntu}/kubeops-suite/offline-assets /root/kubeops-suite/offline-assets -name "${CNI_PLUGIN}*.yaml" -o -name "calico.yaml" -o -name "kube-flannel.yml" 2>/dev/null | head -1 || echo "")
     if [[ -n "${OFFLINE_MANIFEST}" && -f "${OFFLINE_MANIFEST}" ]]; then
         if [[ -n "${NEXUS_IP}" ]]; then
@@ -790,6 +826,8 @@ if [[ "${MODE}" == "airgap" ]]; then
         else
             kubectl apply -f "${OFFLINE_MANIFEST}" --kubeconfig=/tmp/admin-local.conf
         fi
+        kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         echo "CNI_AIRGAP_OK"
         exit 0
     fi
@@ -826,6 +864,16 @@ case "${CNI_PLUGIN}" in
             kubectl delete all,secret,configmap,clusterrole,clusterrolebinding -l k8s-app=cilium -n kube-system --ignore-not-found=true --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
         fi
 
+        HELM_NEXUS_FLAGS=()
+        if [[ -n "${NEXUS_IP}" ]]; then
+            HELM_NEXUS_FLAGS+=(
+                "--set" "image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/cilium"
+                "--set" "image.useDigest=false"
+                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator"
+                "--set" "operator.image.useDigest=false"
+            )
+        fi
+
         helm upgrade --install cilium cilium/cilium \
             --version "${CLEAN_VER}" \
             --namespace kube-system \
@@ -835,11 +883,14 @@ case "${CNI_PLUGIN}" in
             --set k8sServiceHost="${M1_IP}" \
             --set k8sServicePort=6443 \
             --set operator.replicas=2 \
+            --set image.useDigest=false \
+            --set operator.image.useDigest=false \
+            "${HELM_NEXUS_FLAGS[@]}" \
             --kubeconfig=/tmp/admin-local.conf 2>&1 || true
 
-        # Ensure all control planes remain untainted after installation
-        kubectl taint nodes --all node-role.kubernetes.io/control-plane- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
-        kubectl taint nodes --all node-role.kubernetes.io/master- --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        # Re-apply control plane taint (NoSchedule) to ensure application workloads do not schedule on masters
+        kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+        kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
 
         # Trigger immediate refresh of Cilium agent pods across all nodes
         kubectl rollout restart daemonset/cilium -n kube-system --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
@@ -859,6 +910,8 @@ case "${CNI_PLUGIN}" in
         "https://github.com/flannel-io/flannel/releases/download/v${CNI_VERSION}/kube-flannel.yml" --kubeconfig=/tmp/admin-local.conf 2>&1 || true
     ;;
 esac
+kubectl taint nodes -l node-role.kubernetes.io/control-plane node-role.kubernetes.io/control-plane:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
+kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/master:NoSchedule --overwrite --kubeconfig=/tmp/admin-local.conf 2>/dev/null || true
 rm -f /tmp/admin-local.conf
 echo "CNI_OK"
 REMOTE

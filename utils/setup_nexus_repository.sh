@@ -224,6 +224,36 @@ setup_nexus_server() {
     done
     log_success "Servidor Nexus 3 Enterprise activo en el puerto ${nexus_port}."
 
+    # Aceptar EULA de Nexus 3 CE via REST API (requerido en Nexus >= 3.70 / 3.94+)
+    # IMPORTANTE: nexus.onboarding.enabled=false NO desactiva el EULA en 3.94+.
+    # El endpoint /v1/system/eula requiere el disclaimer EXACTO del GET para que el POST sea válido.
+    # Usamos Python en el host para evitar problemas de escaping con las comillas simples.
+    log_info "Aceptando EULA de Nexus 3 CE via REST API (POST /v1/system/eula)..."
+    python3 -c "
+import urllib.request, urllib.error, json, base64, sys
+
+url = 'http://localhost:8081/service/rest/v1/system/eula'
+auth = base64.b64encode(b'admin:${admin_password}').decode('ascii')
+headers = {'Authorization': 'Basic ' + auth, 'Content-Type': 'application/json'}
+
+try:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req) as r:
+        data = json.loads(r.read())
+        if data.get('accepted'):
+            print('[INFO]  EULA ya estaba aceptada.')
+            sys.exit(0)
+        disclaimer = data['disclaimer']
+    payload = json.dumps({'accepted': True, 'disclaimer': disclaimer})
+    req = urllib.request.Request(url, data=payload.encode('utf-8'), headers=headers, method='POST')
+    with urllib.request.urlopen(req) as r:
+        print('[  OK  ] EULA aceptada exitosamente. HTTP:', r.status)
+except urllib.error.HTTPError as e:
+    print('[WARN]  EULA HTTP error:', e.code, e.read().decode(), file=sys.stderr)
+except Exception as e:
+    print('[WARN]  EULA error:', str(e), file=sys.stderr)
+" || true
+
     log_info "Verificando credenciales iniciales de Nexus..."
     local count=0
     until sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null || [[ $count -ge 10 ]]; do
@@ -245,15 +275,18 @@ setup_nexus_server() {
     fi
 
     # 2. Habilitar Realms de Seguridad para Docker en Nexus
-    log_info "Habilitando Realm 'Docker Bearer Token' y Acceso Anónimo en Nexus 3..."
+    # NOTA: En Nexus 3, el realm de autorización se llama internamente de otra forma.
+    # Solo se necesitan NexusAuthenticatingRealm y DockerToken para que docker login funcione.
+    log_info "Habilitando Realms de seguridad (NexusAuthenticatingRealm + DockerToken)..."
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
         -d '["NexusAuthenticatingRealm", "DockerToken"]' \
         "http://localhost:8081/service/rest/v1/security/realms/active" 2>/dev/null || true
 
+    # Habilitar acceso anónimo para que los nodos del clúster puedan hacer pull sin credenciales
     sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
         -H "Content-Type: application/json" \
-        -d '{"enabled": true, "anonymousRole": "nx-anonymous"}' \
+        -d '{"enabled": true}' \
         "http://localhost:8081/service/rest/v1/security/anonymous" 2>/dev/null || true
 
     # 3. Crear Repositorio Nativo 'docker-hosted' en Nexus en puerto 8082
@@ -270,10 +303,28 @@ setup_nexus_server() {
             },
             \"docker\": {
                 \"v1Enabled\": false,
-                \"forceBasicAuth\": true,
+                \"forceBasicAuth\": false,
                 \"httpPort\": ${docker_port}
             }
         }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted" 2>/dev/null || true
+
+    # Si el repositorio ya existía, actualizar forceBasicAuth=false vía PUT
+    sudo docker exec nexus curl -s -X PUT -u "admin:${admin_password}" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"name\": \"docker-hosted\",
+            \"online\": true,
+            \"storage\": {
+                \"blobStoreName\": \"default\",
+                \"strictContentTypeValidation\": true,
+                \"writePolicy\": \"ALLOW\"
+            },
+            \"docker\": {
+                \"v1Enabled\": false,
+                \"forceBasicAuth\": false,
+                \"httpPort\": ${docker_port}
+            }
+        }" "http://localhost:8081/service/rest/v1/repositories/docker/hosted/docker-hosted" 2>/dev/null || true
 
     # 3b. Crear Repositorio Nativo 'raw-hosted' en Nexus para Binarios y Paquetes Air-Gap
     log_info "Creando Repositorio 'raw-hosted' en Nexus 3 para binarios y librerías Air-Gap..."
@@ -301,7 +352,7 @@ EOF
     sudo systemctl restart docker 2>/dev/null || true
     sleep 4
 
-    log_info "Esperando disponibilidad del conector Docker de Nexus en 127.0.0.1:${docker_port}..."
+    log_info "Esperando disponibilidad del conector Docker de Nexus en ${primary_ip}:${docker_port}..."
     local port_ready=0
     for i in $(seq 1 15); do
         if sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" &>/dev/null; then
@@ -312,20 +363,26 @@ EOF
     done
 
     if [[ "${port_ready}" -eq 1 ]]; then
-        log_success "Autenticado exitosamente en Nexus 3 Docker Registry (127.0.0.1:${docker_port})."
+        log_success "Autenticado exitosamente en Nexus 3 Docker Registry (${primary_ip}:${docker_port})."
+        # Login también con la IP real para que Docker acepte el push con ese tag
+        sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
     else
         log_warn "Conector 8082 aún inicializando — reintentando login directo..."
         sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" || true
+        sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
     fi
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas directamente en Nexus 3
-    log_info "Cargando e inyectando imágenes en la Consola Web de Nexus 3 (127.0.0.1:${docker_port})..."
+    # IMPORTANTE: Se tagea con la IP real del servidor Nexus (primary_ip) para que
+    # los nodos del clúster puedan descargar las imágenes usando esa misma IP.
+    log_info "Cargando e inyectando imágenes en Nexus 3 Registry (${primary_ip}:${docker_port})..."
     for img in "${REQUIRED_IMAGES[@]}"; do
         local target_name="${img#*/}"
-        log_info "  [Inyectando a Nexus 3 UI] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
-        sudo docker pull "${img}" || true
-        sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
-        sudo docker push "127.0.0.1:${docker_port}/${target_name}" || log_warn "Error al inyectar ${img} (se omitirá)"
+        local nexus_tag="${primary_ip}:${docker_port}/${target_name}"
+        log_info "  [Inyectando a Nexus 3] ${img} -> ${nexus_tag}"
+        sudo docker pull "${img}" 2>/dev/null || true
+        sudo docker tag  "${img}" "${nexus_tag}" 2>/dev/null || true
+        sudo docker push "${nexus_tag}" || true
     done
 
 _ensure_offline_binaries() {
