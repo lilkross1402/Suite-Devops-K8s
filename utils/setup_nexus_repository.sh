@@ -391,8 +391,14 @@ EOF
             log_info "  [Alias coredns] ${img} -> ${alias_tag}"
             sudo docker tag  "${img}" "${alias_tag}" 2>/dev/null || true
             sudo docker push "${alias_tag}" || true
+            sudo docker rmi -f "${alias_tag}" 2>/dev/null || true
         fi
+        # Limpieza inmediata de imágenes locales tras la inyección exitosa en Nexus
+        sudo docker rmi -f "${img}" "${nexus_tag}" 2>/dev/null || true
     done
+
+    log_info "Limpiando almacenamiento local de Docker para reutilizar espacio en disco..."
+    sudo docker image prune -af --filter "until=1h" 2>/dev/null || true
 
 _ensure_offline_binaries() {
     log_info "Verificando disponibilidad de binarios CLI (kubeadm, kubelet, kubectl, helm, cilium)..."

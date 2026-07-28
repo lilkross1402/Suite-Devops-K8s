@@ -143,10 +143,21 @@ for img in "${MULTI_VERSION_IMAGES[@]}"; do
     current=$((current + 1))
     target_tag="${REGISTRY_HOST}/${img#*/}"
     log_info "[${current}/${total}] Mirroring: ${img} -> ${target_tag}"
-    sudo docker pull "${img}" || true
+    sudo docker rmi -f "${img}" 2>/dev/null || true
+    sudo docker pull --platform linux/amd64 "${img}" 2>/dev/null || sudo docker pull "${img}" || true
     sudo docker tag "${img}" "${target_tag}" || true
     sudo docker push "${target_tag}" || log_warn "Push omitido para ${target_tag}"
+    if [[ "${img#*/}" == coredns/coredns:* ]]; then
+        alias_tag="${REGISTRY_HOST}/${img#*/coredns/}"
+        sudo docker tag "${img}" "${alias_tag}" 2>/dev/null || true
+        sudo docker push "${alias_tag}" 2>/dev/null || true
+        sudo docker rmi -f "${alias_tag}" 2>/dev/null || true
+    fi
+    sudo docker rmi -f "${img}" "${target_tag}" 2>/dev/null || true
 done
+
+log_info "Limpiando almacenamiento local de Docker para reutilizar espacio en disco..."
+sudo docker image prune -af 2>/dev/null || true
 
 log_section "🎉 ¡MATRIZ MULTI-VERSIÓN CARGADA EN NEXUS 3!"
 log_info "Todas las versiones (anteriores, actuales y superiores) están listas en Nexus UI."
