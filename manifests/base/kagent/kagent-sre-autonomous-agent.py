@@ -372,7 +372,12 @@ class KAgentSREController:
             nodes = self.list_nodes().items
             pods = self.list_all_pods().items
             
-            ready_nodes = sum(1 for n in nodes if any(c.type == "Ready" and c.status == "True" for c.readiness_status if hasattr(c, "type") and hasattr(c, "status") or hasattr(c, "type")))
+            ready_nodes = 0
+            for n in nodes:
+                for c in (n.status.conditions or []):
+                    if c.type == "Ready" and c.status == "True":
+                        ready_nodes += 1
+                        break
             total_nodes = len(nodes)
             
             failing_pods = []
@@ -387,7 +392,7 @@ class KAgentSREController:
 
             msg = (
                 f"📊 *REPORTE DE ESTADO DEL CLÚSTER KUBERNETES*\n\n"
-                f"💻 *Nodos Saludables:* `{total_nodes}/{total_nodes}` Ready\n"
+                f"💻 *Nodos Saludables:* `{ready_nodes}/{total_nodes}` Ready\n"
                 f"📦 *Total de Pods:* `{len(pods)}` pods en ejecución\n"
                 f"🚨 *Pods Anómalos:* `{len(failing_pods)}` pods\n"
             )
@@ -406,13 +411,17 @@ class KAgentSREController:
             lines = []
             for n in nodes:
                 name = n.metadata.name
-                roles = [k.replace("node-role.kubernetes.io/", "") for k in n.metadata.labels if "node-role" in k]
+                roles = [k.replace("node-role.kubernetes.io/", "") for k in (n.metadata.labels or {}) if "node-role" in k]
                 role_str = ",".join(roles) if roles else "worker"
-                is_ready = any(c.type == "Ready" and c.status == "True" for c.status.conditions for c in [c] if c.type == "Ready")
+                is_ready = False
+                for c in (n.status.conditions or []):
+                    if c.type == "Ready" and c.status == "True":
+                        is_ready = True
+                        break
                 status_icon = "🟢 Ready" if is_ready else "🔴 NotReady"
                 if n.spec.unschedulable:
                     status_icon += " 🔒 (Cordoned)"
-                ip = next((addr.address for addr in n.status.addresses if addr.type == "InternalIP"), "N/A")
+                ip = next((addr.address for addr in (n.status.addresses or []) if addr.type == "InternalIP"), "N/A")
                 lines.append(f"• `{name}` ({ip}) | *{role_str}* | {status_icon}")
 
             msg = "🖥️ *ESTADO DE NODOS DEL CLÚSTER:*\n\n" + "\n".join(lines)
