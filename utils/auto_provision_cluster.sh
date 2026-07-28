@@ -230,16 +230,20 @@ server = "http://${NEXUS_HOST}:${NEXUS_PORT}"
   skip_verify = true
 EOF
 
-    for reg in docker.io quay.io registry.k8s.io ghcr.io gcr.io; do
+    for reg in docker.io quay.io registry.k8s.io ghcr.io gcr.io k8s.gcr.io docker.elastic.co; do
+        local upstream_server="https://${reg}"
+        if [[ "${reg}" == "docker.io" ]]; then
+            upstream_server="https://registry-1.docker.io"
+        fi
         mkdir -p "/etc/containerd/certs.d/${reg}"
         cat > "/etc/containerd/certs.d/${reg}/hosts.toml" <<EOF
-server = "https://${reg}"
+server = "${upstream_server}"
 
 [host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
   capabilities = ["pull", "resolve"]
   skip_verify = true
 
-[host."https://${reg}"]
+[host."${upstream_server}"]
   capabilities = ["pull", "resolve"]
 EOF
     done
@@ -965,6 +969,18 @@ kubectl taint nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/ma
 rm -f /tmp/admin-local.conf
 echo "CNI_OK"
 REMOTE
+
+    log_info "Instalando Almacenamiento Local Aprovisionador (StorageClass local-path)..."
+    local storage_manifest="${SUITE_ROOT}/manifests/base/storage/local-storage-provisioner.yaml"
+    if [[ -f "${storage_manifest}" ]]; then
+        if [[ -n "${nexus_host}" ]]; then
+            sed "s|rancher/local-path-provisioner:|${nexus_host}:${nexus_docker_port}/rancher/local-path-provisioner:|g" "${storage_manifest}" | \
+                _ssh "${ssh_user}@${master1_ip}" "sudo kubectl apply -f - --kubeconfig=/etc/kubernetes/admin.conf" 2>&1 || true
+        else
+            _ssh "${ssh_user}@${master1_ip}" "sudo kubectl apply -f - --kubeconfig=/etc/kubernetes/admin.conf" < "${storage_manifest}" 2>&1 || true
+        fi
+        log_success "StorageClass 'local-path' configurado como predeterminado para volumenes persistentes."
+    fi
 
     printf "\n"
     log_section "🎉 ¡AUTO-DESPLIEGUE DEL CLÚSTER HA COMPLETADO!"

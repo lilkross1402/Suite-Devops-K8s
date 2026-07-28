@@ -142,6 +142,23 @@ REQUIRED_IMAGES=(
     "openebs/provisioner-localpv:3.5.0"
     "busybox:latest"
 
+    # --- AI & Database Workloads (KAgent, Ollama, Postgres, Redis) ---
+    "postgres:15"
+    "postgres:16"
+    "postgres:latest"
+    "redis:7.0"
+    "redis:7.2"
+    "redis:7.4"
+    "ollama/ollama:v0.4.7"
+    "ollama/ollama:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-controller:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-grafana-mcp:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-telegram-monitor:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-kmcp-controller-manager:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-querydoc:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-tools:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-ui:latest"
+
     # --- Fallback CNI Plugins ---
     "docker.io/calico/cni:v3.27.0"
     "docker.io/calico/node:v3.27.0"
@@ -392,6 +409,21 @@ EOF
             sudo docker tag  "${img}" "${alias_tag}" 2>/dev/null || sudo docker tag "${nexus_tag}" "${alias_tag}" 2>/dev/null || true
             sudo docker push "${alias_tag}" || true
             sudo docker rmi -f "${alias_tag}" 2>/dev/null || true
+        fi
+        if [[ "${target_name}" == kagent-dev/kagent/* ]]; then
+            local kagent_alias="${primary_ip}:${docker_port}/${target_name#kagent-dev/}"
+            log_info "  [Alias kagent] ${img} -> ${kagent_alias}"
+            sudo docker tag "${img}" "${kagent_alias}" 2>/dev/null || sudo docker tag "${nexus_tag}" "${kagent_alias}" 2>/dev/null || true
+            sudo docker push "${kagent_alias}" 2>/dev/null || true
+            sudo docker rmi -f "${kagent_alias}" 2>/dev/null || true
+        fi
+        if [[ "${img}" != */* || ( "${img}" == docker.io/* && "${img#docker.io/}" != */* ) ]]; then
+            local clean_name="${target_name#docker.io/}"
+            local lib_tag="${primary_ip}:${docker_port}/library/${clean_name}"
+            log_info "  [Alias library] ${img} -> ${lib_tag}"
+            sudo docker tag "${img}" "${lib_tag}" 2>/dev/null || sudo docker tag "${nexus_tag}" "${lib_tag}" 2>/dev/null || true
+            sudo docker push "${lib_tag}" 2>/dev/null || true
+            sudo docker rmi -f "${lib_tag}" 2>/dev/null || true
         fi
         # Limpieza inmediata de imágenes locales tras la inyección exitosa en Nexus
         sudo docker rmi -f "${img}" "${nexus_tag}" 2>/dev/null || true

@@ -129,6 +129,23 @@ MULTI_VERSION_IMAGES=(
     "quay.io/jetstack/cert-manager-controller:v1.13.3"
     "quay.io/jetstack/cert-manager-controller:v1.14.4"
     "quay.io/jetstack/cert-manager-controller:v1.15.0"
+
+    # --- AI & Database Workloads (KAgent, Ollama, Postgres, Redis) ---
+    "postgres:15"
+    "postgres:16"
+    "postgres:latest"
+    "redis:7.0"
+    "redis:7.2"
+    "redis:7.4"
+    "ollama/ollama:v0.4.7"
+    "ollama/ollama:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-controller:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-grafana-mcp:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-telegram-monitor:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-kmcp-controller-manager:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-querydoc:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-tools:latest"
+    "ghcr.io/kagent-dev/kagent/kagent-ui:latest"
 )
 
 log_info "Autenticando en el registro Nexus (${REGISTRY_HOST})..."
@@ -152,6 +169,19 @@ for img in "${MULTI_VERSION_IMAGES[@]}"; do
         sudo docker tag "${img}" "${alias_tag}" 2>/dev/null || true
         sudo docker push "${alias_tag}" 2>/dev/null || true
         sudo docker rmi -f "${alias_tag}" 2>/dev/null || true
+    fi
+    if [[ "${img#*/}" == kagent-dev/kagent/* ]]; then
+        kagent_alias="${REGISTRY_HOST}/${img#*/kagent-dev/}"
+        sudo docker tag "${img}" "${kagent_alias}" 2>/dev/null || true
+        sudo docker push "${kagent_alias}" 2>/dev/null || true
+        sudo docker rmi -f "${kagent_alias}" 2>/dev/null || true
+    fi
+    if [[ "${img}" != */* || ( "${img}" == docker.io/* && "${img#docker.io/}" != */* ) ]]; then
+        clean_name="${img#docker.io/}"
+        lib_tag="${REGISTRY_HOST}/library/${clean_name#*/}"
+        sudo docker tag "${img}" "${lib_tag}" 2>/dev/null || true
+        sudo docker push "${lib_tag}" 2>/dev/null || true
+        sudo docker rmi -f "${lib_tag}" 2>/dev/null || true
     fi
     sudo docker rmi -f "${img}" "${target_tag}" 2>/dev/null || true
 done
