@@ -24,23 +24,96 @@ source "${SUITE_ROOT}/lib/logger.sh"
 # shellcheck disable=SC1090
 source "${SUITE_ROOT}/lib/state_manager.sh"
 
+_detect_cluster_node_ips() {
+    detected_masters=()
+    detected_workers=()
+    detection_source=""
+
+    # 1. Detectar vía kubectl desde Kubeconfig activo
+    local kconf=""
+    for conf in "/etc/kubernetes/admin.conf" "${HOME}/.kube/config" "/tmp/admin-local.conf"; do
+        if [[ -f "${conf}" ]]; then
+            kconf="${conf}"
+            break
+        fi
+    done
+
+    if [[ -n "${kconf}" ]] && command -v kubectl &>/dev/null && kubectl get nodes --kubeconfig="${kconf}" &>/dev/null; then
+        local m_ips=($(kubectl get nodes --kubeconfig="${kconf}" -o wide --no-headers 2>/dev/null | grep -i 'control-plane\|master' | awk '{print $6}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true))
+        local w_ips=($(kubectl get nodes --kubeconfig="${kconf}" -o wide --no-headers 2>/dev/null | grep -v -i 'control-plane\|master' | awk '{print $6}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true))
+
+        if [[ ${#m_ips[@]} -gt 0 || ${#w_ips[@]} -gt 0 ]]; then
+            detected_masters=("${m_ips[@]}")
+            detected_workers=("${w_ips[@]}")
+            detection_source="kubectl (Clúster K8s Activo)"
+            return 0
+        fi
+    fi
+
+    # 2. Detectar desde State Manager (~/.kubeops/cluster-state.json)
+    if command -v jq &>/dev/null && declare -f state_get &>/dev/null; then
+        local m_ips=($(state_get ".masters[].ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true))
+        local w_ips=($(state_get ".workers[].ip" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true))
+        if [[ ${#m_ips[@]} -gt 0 || ${#w_ips[@]} -gt 0 ]]; then
+            detected_masters=("${m_ips[@]}")
+            detected_workers=("${w_ips[@]}")
+            detection_source="State Manager (~/.kubeops/cluster-state.json)"
+            return 0
+        fi
+    fi
+
+    # 3. Detectar IP local si no hay clúster o estado registrado
+    local local_ip
+    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+    if [[ -n "${local_ip}" && "${local_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        detected_masters=("${local_ip}")
+        detected_workers=()
+        detection_source="IP del Nodo Local (${local_ip})"
+        return 0
+    fi
+
+    return 1
+}
+
 auto_reset_ha_cluster() {
     log_banner
     log_section "Orquestador de Reseteo y Limpieza Remota de Clúster (Teardown vía SSH)"
 
     local ssh_user="ubuntu"
-    local master_ips=("172.31.32.10" "172.31.34.86" "172.31.43.80")
-    local worker_ips=("172.31.35.21" "172.31.32.154" "172.31.33.195")
+    local master_ips=()
+    local worker_ips=()
     local ssh_key=""
 
-    printf "  ${CLR_BOLD_WHITE}Inventario de Nodos a Limpiar:${CLR_RESET}\n"
-    printf "  Usuario SSH:          ${CLR_BOLD_CYAN}%s${CLR_RESET}\n" "${ssh_user}"
-    printf "  Nodos Control Plane: %s\n" "${master_ips[*]}"
-    printf "  Nodos Workers:       %s\n\n" "${worker_ips[*]}"
+    local detected_masters=()
+    local detected_workers=()
+    local detection_source=""
 
-    printf "  ¿Desea modificar las IPs del inventario a resetear? [y/N]: "
-    read -r modify_inv
-    if [[ "${modify_inv}" =~ ^[yY]$ ]]; then
+    log_info "Detectando automáticamente las IPs de los nodos del clúster..."
+    if _detect_cluster_node_ips; then
+        log_success "Nodos detectados automáticamente desde: ${detection_source}"
+        master_ips=("${detected_masters[@]}")
+        worker_ips=("${detected_workers[@]}")
+    else
+        log_warn "No se pudieron detectar las IPs del clúster automáticamente."
+    fi
+
+    printf "\n  ${CLR_BOLD_WHITE}Inventario de Nodos a Limpiar:${CLR_RESET}\n"
+    printf "  Usuario SSH:          ${CLR_BOLD_CYAN}%s${CLR_RESET}\n" "${ssh_user}"
+    printf "  Nodos Control Plane: ${CLR_CYAN}%s${CLR_RESET}\n" "${master_ips[*]:-<ninguno>}"
+    printf "  Nodos Workers:       ${CLR_CYAN}%s${CLR_RESET}\n\n" "${worker_ips[*]:-<ninguno>}"
+
+    if [[ ${#master_ips[@]} -gt 0 || ${#worker_ips[@]} -gt 0 ]]; then
+        printf "  ¿Desea usar este inventario de IPs detectadas automáticamente? [Y/n]: "
+        read -r use_detected
+        if [[ "${use_detected}" =~ ^[nN]$ ]]; then
+            printf "  Ingrese las IPs de los Másters (separadas por espacio): "
+            read -r -a master_ips
+            printf "  Ingrese las IPs de los Workers (separadas por espacio): "
+            read -r -a worker_ips
+            printf "  Ingrese el Usuario SSH (ej. ubuntu / root): "
+            read -r ssh_user
+        fi
+    else
         printf "  Ingrese las IPs de los Másters (separadas por espacio): "
         read -r -a master_ips
         printf "  Ingrese las IPs de los Workers (separadas por espacio): "
@@ -49,25 +122,39 @@ auto_reset_ha_cluster() {
         read -r ssh_user
     fi
 
-    printf "  ¿Desea especificar un archivo de clave privada SSH (.pem / id_rsa)? [y/N]: "
-    read -r use_key
-    if [[ "${use_key}" =~ ^[yY]$ ]]; then
-        printf "  Ingrese el nombre o ruta de la clave SSH (.pem / id_rsa): "
-        read -r ssh_key
-        local found_key=""
-        for path in "${ssh_key}" "${SUITE_ROOT}/${ssh_key}" "${HOME}/${ssh_key}" "/home/${ssh_user}/${ssh_key}" "$(pwd)/${ssh_key}"; do
-            if [[ -n "${path}" && -f "${path}" ]]; then
-                found_key="${path}"
-                break
+    # Auto-detectar clave privada SSH en el directorio de la suite si existe
+    for default_k in "ubuntu-seniat.pem" "id_rsa" "id_ed25519"; do
+        for kpath in "${SUITE_ROOT}/${default_k}" "${HOME}/.ssh/${default_k}" "$(pwd)/${default_k}"; do
+            if [[ -f "${kpath}" ]]; then
+                ssh_key="${kpath}"
+                chmod 400 "${ssh_key}" 2>/dev/null || true
+                log_info "Clave SSH detectada automáticamente: ${ssh_key}"
+                break 2
             fi
         done
-        if [[ -n "${found_key}" ]]; then
-            ssh_key="${found_key}"
-            chmod 400 "${ssh_key}" 2>/dev/null || true
-            log_success "Clave SSH localizada: ${ssh_key}"
-        else
-            log_warn "Clave '${ssh_key}' no encontrada. Continuando con agente SSH estándar."
-            ssh_key=""
+    done
+
+    if [[ -z "${ssh_key}" ]]; then
+        printf "  ¿Desea especificar un archivo de clave privada SSH (.pem / id_rsa)? [y/N]: "
+        read -r use_key
+        if [[ "${use_key}" =~ ^[yY]$ ]]; then
+            printf "  Ingrese el nombre o ruta de la clave SSH (.pem / id_rsa): "
+            read -r ssh_key
+            local found_key=""
+            for path in "${ssh_key}" "${SUITE_ROOT}/${ssh_key}" "${HOME}/${ssh_key}" "/home/${ssh_user}/${ssh_key}" "$(pwd)/${ssh_key}"; do
+                if [[ -n "${path}" && -f "${path}" ]]; then
+                    found_key="${path}"
+                    break
+                fi
+            done
+            if [[ -n "${found_key}" ]]; then
+                ssh_key="${found_key}"
+                chmod 400 "${ssh_key}" 2>/dev/null || true
+                log_success "Clave SSH localizada: ${ssh_key}"
+            else
+                log_warn "Clave '${ssh_key}' no encontrada. Continuando con agente SSH estándar."
+                ssh_key=""
+            fi
         fi
     fi
 
