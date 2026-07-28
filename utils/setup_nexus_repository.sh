@@ -224,22 +224,35 @@ setup_nexus_server() {
     done
     log_success "Servidor Nexus 3 Enterprise activo en el puerto ${nexus_port}."
 
-    # Aceptar EULA / Deshabilitar onboarding wizard (requerido en Nexus 3 CE >= 3.70)
-    # Sin esto, docker login devuelve 403 incluso con credenciales correctas.
-    log_info "Aceptando EULA de Nexus 3 CE (nexus.onboarding.enabled=false)..."
-    sudo docker exec nexus sh -c "
-        mkdir -p /nexus-data/etc
-        if ! grep -q 'nexus.onboarding.enabled' /nexus-data/etc/nexus.properties 2>/dev/null; then
-            echo 'nexus.onboarding.enabled=false' >> /nexus-data/etc/nexus.properties
-        fi
-    " 2>/dev/null || true
-    sudo docker restart nexus
-    log_info "Reiniciando Nexus para aplicar configuración EULA (30 segundos)..."
-    sleep 30
-    until sudo docker exec nexus curl -fsSL http://localhost:8081/service/rest/v1/status &>/dev/null; do
-        sleep 5
-    done
-    log_success "Nexus 3 reiniciado y listo (EULA aceptada)."
+    # Aceptar EULA de Nexus 3 CE via REST API (requerido en Nexus >= 3.70 / 3.94+)
+    # IMPORTANTE: nexus.onboarding.enabled=false NO desactiva el EULA en 3.94+.
+    # El endpoint /v1/system/eula requiere el disclaimer EXACTO del GET para que el POST sea válido.
+    # Usamos Python en el host para evitar problemas de escaping con las comillas simples.
+    log_info "Aceptando EULA de Nexus 3 CE via REST API (POST /v1/system/eula)..."
+    python3 -c "
+import urllib.request, urllib.error, json, base64, sys
+
+url = 'http://localhost:8081/service/rest/v1/system/eula'
+auth = base64.b64encode(b'admin:${admin_password}').decode('ascii')
+headers = {'Authorization': 'Basic ' + auth, 'Content-Type': 'application/json'}
+
+try:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req) as r:
+        data = json.loads(r.read())
+        if data.get('accepted'):
+            print('[INFO]  EULA ya estaba aceptada.')
+            sys.exit(0)
+        disclaimer = data['disclaimer']
+    payload = json.dumps({'accepted': True, 'disclaimer': disclaimer})
+    req = urllib.request.Request(url, data=payload.encode('utf-8'), headers=headers, method='POST')
+    with urllib.request.urlopen(req) as r:
+        print('[  OK  ] EULA aceptada exitosamente. HTTP:', r.status)
+except urllib.error.HTTPError as e:
+    print('[WARN]  EULA HTTP error:', e.code, e.read().decode(), file=sys.stderr)
+except Exception as e:
+    print('[WARN]  EULA error:', str(e), file=sys.stderr)
+" || true
 
     log_info "Verificando credenciales iniciales de Nexus..."
     local count=0
