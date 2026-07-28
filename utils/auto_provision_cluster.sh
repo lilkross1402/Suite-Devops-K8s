@@ -95,6 +95,13 @@ K8S_VERSION="${1:-1.29}"
 K8S_VERSION_FULL="${2:-1.29.15}"
 NEXUS_HOST="${3:-}"
 NEXUS_PORT="${4:-8082}"
+NEXUS_HOST="${NEXUS_HOST#http://}"
+NEXUS_HOST="${NEXUS_HOST#https://}"
+NEXUS_HOST="${NEXUS_HOST%%/*}"
+if [[ "${NEXUS_HOST}" == *:* ]]; then
+    NEXUS_PORT="${NEXUS_HOST#*:}"
+    NEXUS_HOST="${NEXUS_HOST%%:*}"
+fi
 
 # 1. OS Detection
 OS_ID="ubuntu"
@@ -434,6 +441,13 @@ auto_provision_ha_cluster() {
             printf "  Ingrese la IP/URL del Registro Docker Nexus ya activo (ej. 172.31.46.152:8082): "
             read -r nexus_host
         fi
+        nexus_host="${nexus_host#http://}"
+        nexus_host="${nexus_host#https://}"
+        nexus_host="${nexus_host%%/*}"
+        if [[ "${nexus_host}" == *:* ]]; then
+            nexus_docker_port="${nexus_host#*:}"
+            nexus_host="${nexus_host%%:*}"
+        fi
     fi
 
     # ── WIZARD: Versiones y Plugin CNI ─────────────────────────────────────
@@ -610,6 +624,13 @@ auto_provision_ha_cluster() {
     _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${vip_ip}" "${k8s_version_full}" "${pod_cidr}" "${service_cidr}" "${ssh_user}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
 set -euo pipefail
 VIP="${1}"; K8S_VER="${2}"; POD_CIDR="${3}"; SVC_CIDR="${4}"; OS_USER="${5:-ubuntu}"; NEXUS_IP="${6:-}"; NEXUS_PORT="${7:-8082}"
+NEXUS_IP="${NEXUS_IP#http://}"
+NEXUS_IP="${NEXUS_IP#https://}"
+NEXUS_IP="${NEXUS_IP%%/*}"
+if [[ "${NEXUS_IP}" == *:* ]]; then
+    NEXUS_PORT="${NEXUS_IP#*:}"
+    NEXUS_IP="${NEXUS_IP%%:*}"
+fi
 mkdir -p "${HOME}/.kube"
 
 # Ensure containerd CRI plugin is active
@@ -807,6 +828,13 @@ REMOTE
     _ssh "${ssh_user}@${master1_ip}" sudo bash -s -- "${cni_plugin}" "${cni_version}" "${pod_cidr}" "${deploy_mode}" "${nexus_host}" "${nexus_docker_port}" <<'REMOTE'
 set -euo pipefail
 CNI_PLUGIN="${1}"; CNI_VERSION="${2}"; POD_CIDR="${3}"; MODE="${4:-online}"; NEXUS_IP="${5:-}"; NEXUS_PORT="${6:-8082}"
+NEXUS_IP="${NEXUS_IP#http://}"
+NEXUS_IP="${NEXUS_IP#https://}"
+NEXUS_IP="${NEXUS_IP%%/*}"
+if [[ "${NEXUS_IP}" == *:* ]]; then
+    NEXUS_PORT="${NEXUS_IP#*:}"
+    NEXUS_IP="${NEXUS_IP%%:*}"
+fi
 
 # Direct local kubeconfig using Master 1 IP (which matches TLS cert SANs)
 M1_IP=$(hostname -I | awk '{print $1}')
