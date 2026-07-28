@@ -196,13 +196,27 @@ esac
 mkdir -p /etc/containerd
 containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' >/etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|g' /etc/containerd/config.toml
+if grep -q "config_path" /etc/containerd/config.toml; then
+    sed -i 's|config_path = .*|config_path = "/etc/containerd/certs.d"|g' /etc/containerd/config.toml
+else
+    echo '[plugins."io.containerd.grpc.v1.cri".registry]' >> /etc/containerd/config.toml
+    echo '  config_path = "/etc/containerd/certs.d"' >> /etc/containerd/config.toml
+fi
 
 rm -rf /etc/containerd/certs.d/* 2>/dev/null || true
 
 if [[ -n "${NEXUS_HOST}" ]]; then
     mkdir -p "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}"
     cat > "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}/hosts.toml" <<EOF
+server = "http://${NEXUS_HOST}:${NEXUS_PORT}"
+
+[host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+
+    mkdir -p "/etc/containerd/certs.d/_default"
+    cat > "/etc/containerd/certs.d/_default/hosts.toml" <<EOF
 server = "http://${NEXUS_HOST}:${NEXUS_PORT}"
 
 [host."http://${NEXUS_HOST}:${NEXUS_PORT}"]
