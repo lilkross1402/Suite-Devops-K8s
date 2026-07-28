@@ -913,7 +913,8 @@ case "${CNI_PLUGIN}" in
             HELM_NEXUS_FLAGS+=(
                 "--set" "image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/cilium"
                 "--set" "image.useDigest=false"
-                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator"
+                "--set" "operator.image.repository=${NEXUS_IP}:${NEXUS_PORT}/cilium/operator-generic"
+                "--set" "operator.image.suffix="
                 "--set" "operator.image.useDigest=false"
             )
         fi
