@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kagent-sre-controller
+  namespace: kagent-system
+  labels:
+    app.kubernetes.io/name: kagent-sre
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kagent-sre
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kagent-sre
+    spec:
+      serviceAccountName: kagent-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kagent-sre
+          image: python:3.11-slim
+          command: ["python3", "/app/kagent-sre-autonomous-agent.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kagent-credentials
+                  key: TELEGRAM_BOT_TOKEN
+                  optional: true
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kagent-credentials
+                  key: TELEGRAM_CHAT_ID
+                  optional: true
+            - name: TELEGRAM_ALLOWED_USER_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: kagent-credentials
+                  key: TELEGRAM_ALLOWED_USER_IDS
+                  optional: true
+            - name: CHECK_INTERVAL_SECONDS
+              value: "15"
+            - name: PENDING_THRESHOLD_MINUTES
+              value: "10"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import sys; sys.exit(0)"
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import sys; sys.exit(0)"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: code-volume
+              mountPath: /app
+            - name: tmp-volume
+              mountPath: /tmp
+      volumes:
+        - name: code-volume
+          configMap:
+            name: kagent-sre-code
+        - name: tmp-volume
+          emptyDir:
+            medium: Memory

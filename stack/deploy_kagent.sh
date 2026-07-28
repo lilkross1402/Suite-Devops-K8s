@@ -106,24 +106,71 @@ deploy_kagent_platform() {
     log_success "ModelConfig y Agente Declarativo vinculados a Ollama"
 
     # ---------------------------------------------------------------------------
-    # Paso 5: Monitoreo Autónomo, Auto-Remediación y Notificaciones Telegram
+    # Paso 5: Monitoreo Autónomo, Auto-Remediación & Bot Interactivo de Telegram
     # ---------------------------------------------------------------------------
-    log_info "[Paso 5/5] Desplegando Secret y CronJob de Auto-Remediación Telegram (1 min)..."
-    local secret_manifest="${SUITE_ROOT}/manifests/base/kagent/kagent-telegram-secret.yaml"
-    local cronjob_manifest="${SUITE_ROOT}/manifests/base/kagent/kagent-telegram-cronjob.yaml"
+    log_info "[Paso 5/5] Configurando Credenciales de Telegram & Controlador Autónomo SRE..."
+    
+    local telegram_token=""
+    local telegram_chat_id=""
+    local telegram_allowed_users=""
+    
+    printf "\n"
+    printf "  ══════════════════════════════════════════════════════════════\n"
+    printf "  Configuración del Bot de Telegram (KAgent SRE)\n"
+    printf "  ══════════════════════════════════════════════════════════════\n\n"
 
-    if [[ -f "${secret_manifest}" ]]; then
-        kubectl --kubeconfig="${KUBECONFIG}" apply -f "${secret_manifest}"
+    printf "  Ingrese el TOKEN del Bot de Telegram (ej. 8058092187:AAFC...): "
+    read -r telegram_token
+
+    printf "  Ingrese el ChatID principal de Telegram para recibir alertas: "
+    read -r telegram_chat_id
+
+    printf "  Ingrese los UserIDs autorizados para consultar e interactuar (separados por espacio): "
+    read -r telegram_allowed_users
+
+    # Crear Namespace kagent-system y kagent
+    kubectl --kubeconfig="${KUBECONFIG}" create namespace kagent-system 2>/dev/null || true
+    kubectl --kubeconfig="${KUBECONFIG}" create namespace kagent 2>/dev/null || true
+
+    # Crear Secret de Credenciales en kagent-system y kagent
+    for ns in kagent-system kagent; do
+        kubectl --kubeconfig="${KUBECONFIG}" create secret generic kagent-credentials -n "${ns}" \
+            --from-literal=TELEGRAM_BOT_TOKEN="${telegram_token}" \
+            --from-literal=TELEGRAM_CHAT_ID="${telegram_chat_id}" \
+            --from-literal=TELEGRAM_ALLOWED_USER_IDS="${telegram_allowed_users}" \
+            --dry-run=client -o yaml | kubectl --kubeconfig="${KUBECONFIG}" apply -f - 2>/dev/null || true
+
+        kubectl --kubeconfig="${KUBECONFIG}" create secret generic kagent-telegram-secret -n "${ns}" \
+            --from-literal=TELEGRAM_BOT_TOKEN="${telegram_token}" \
+            --from-literal=TELEGRAM_CHAT_ID="${telegram_chat_id}" \
+            --from-literal=TELEGRAM_ALLOWED_USER_IDS="${telegram_allowed_users}" \
+            --dry-run=client -o yaml | kubectl --kubeconfig="${KUBECONFIG}" apply -f - 2>/dev/null || true
+    done
+
+    # Crear ConfigMap con el código de kagent-sre-autonomous-agent.py
+    local agent_script="${SUITE_ROOT}/manifests/base/kagent/kagent-sre-autonomous-agent.py"
+    if [[ -f "${agent_script}" ]]; then
+        kubectl --kubeconfig="${KUBECONFIG}" create configmap kagent-sre-code -n kagent-system \
+            --from-file=kagent-sre-autonomous-agent.py="${agent_script}" \
+            --dry-run=client -o yaml | kubectl --kubeconfig="${KUBECONFIG}" apply -f - 2>/dev/null || true
     fi
-    if [[ -f "${cronjob_manifest}" ]]; then
-        kubectl --kubeconfig="${KUBECONFIG}" apply -f "${cronjob_manifest}"
-    fi
+
+    # Aplicar Manifiestos de Producción RBAC, NetworkPolicy y Controller SRE
+    local rbac_manifest="${SUITE_ROOT}/manifests/base/kagent/01-rbac-production.yaml"
+    local netpol_manifest="${SUITE_ROOT}/manifests/base/kagent/03-networkpolicy.yaml"
+    local sre_deploy="${SUITE_ROOT}/manifests/base/kagent/kagent-sre-rbac-deployment.yaml"
+
+    [[ -f "${rbac_manifest}" ]] && kubectl --kubeconfig="${KUBECONFIG}" apply -f "${rbac_manifest}" 2>/dev/null || true
+    [[ -f "${netpol_manifest}" ]] && kubectl --kubeconfig="${KUBECONFIG}" apply -f "${netpol_manifest}" 2>/dev/null || true
+    [[ -f "${sre_deploy}" ]] && kubectl --kubeconfig="${KUBECONFIG}" apply -f "${sre_deploy}" 2>/dev/null || true
+
+    kubectl --kubeconfig="${KUBECONFIG}" rollout restart deployment/kagent-sre-controller -n kagent-system 2>/dev/null || true
 
     log_section "🎉 ¡PLATAFORMA AI KAGENT & AUTO-REMEDIACIÓN TELEGRAM DESPLEGADAS!"
-    printf "  %-30s %s\n" "Namespace Principal:" "kagent"
-    printf "  %-30s %s\n" "Motor LLM Local:" "Ollama (llama3.2:1b / qwen2.5:0.5b)"
-    printf "  %-30s %s\n" "Frecuencia Monitoreo:" "Cada 1 minuto (CronJob kagent-telegram-monitor)"
-    printf "  %-30s %s\n\n" "Auto-Remediación:" "Activa (Recreación de pods caídos + Alerta Telegram)"
+    printf "  %-30s %s\n" "Namespace SRE:" "kagent-system"
+    printf "  %-30s %s\n" "Controlador Autónomo:" "kagent-sre-controller"
+    printf "  %-30s %s\n" "Bot Interactivo Telegram:" "Activo (Long-Polling & Comandos)"
+    printf "  %-30s %s\n\n" "Auto-Remediación & Cordon:" "Activa (Recreación de pods + Cordoning de nodos)"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

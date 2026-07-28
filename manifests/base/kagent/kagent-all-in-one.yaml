@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent-system
+  labels:
+    app.kubernetes.io/name: kagent
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kagent-sa
+  namespace: kagent-system
+  labels:
+    app.kubernetes.io/name: kagent
+    app.kubernetes.io/component: bot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kagent-operator-role
+  labels:
+    app.kubernetes.io/name: kagent
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/status
+      - namespaces
+      - events
+      - services
+      - endpoints
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+      - nodes
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/status
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/scale
+      - statefulsets
+      - statefulsets/scale
+      - replicasets
+      - replicasets/scale
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kagent-operator-binding
+subjects:
+  - kind: ServiceAccount
+    name: kagent-sa
+    namespace: kagent-system
+roleRef:
+  kind: ClusterRole
+  name: kagent-operator-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kagent-network-policy
+  namespace: kagent-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kagent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

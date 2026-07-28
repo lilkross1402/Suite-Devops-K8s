@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kagent-network-policy
+  namespace: kagent-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kagent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: [] # Default Deny Ingress
+  egress:
+    # 1. Resolver DNS interno
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. Comunicación con el API Server de Kubernetes
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # 3. Egress HTTPS hacia la API de Telegram
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

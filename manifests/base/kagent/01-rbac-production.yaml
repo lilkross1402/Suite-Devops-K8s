@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent-system
+  labels:
+    app.kubernetes.io/name: kagent
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kagent-sa
+  namespace: kagent-system
+  labels:
+    app.kubernetes.io/name: kagent
+    app.kubernetes.io/component: bot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kagent-operator-role
+  labels:
+    app.kubernetes.io/name: kagent
+    app.kubernetes.io/component: rbac
+rules:
+  # 1. Inspección y Gestión de Salud de Nodos (Read/Patch a nivel de Clúster)
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/status
+      - namespaces
+      - events
+      - services
+      - endpoints
+    verbs: ["get", "list", "watch", "patch", "update"]
+
+  # 2. Lectura de Métricas del Clúster y de Pods (Metrics Server)
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+      - nodes
+    verbs: ["get", "list"]
+
+  # 3. Lectura de Logs, Estado y Salud de Pods
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/status
+    verbs: ["get", "list", "watch", "delete"]
+
+  # 4. Escalar Replicas y Reinicio de Workloads (Deployments, StatefulSets, ReplicaSets)
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/scale
+      - statefulsets
+      - statefulsets/scale
+      - replicasets
+      - replicasets/scale
+    verbs: ["get", "list", "watch", "patch", "update"]
+
+  # 5. Leader Election (Coordinación HA)
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kagent-operator-binding
+subjects:
+  - kind: ServiceAccount
+    name: kagent-sa
+    namespace: kagent-system
+roleRef:
+  kind: ClusterRole
+  name: kagent-operator-role
+  apiGroup: rbac.authorization.k8s.io
