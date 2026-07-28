@@ -150,12 +150,14 @@ case "${OS_ID}" in
             apt-get install -y --fix-missing containerd.io || apt-get install -y containerd 2>/dev/null || true
         fi
 
-        if ! command -v kubeadm &>/dev/null; then
+        INSTALLED_KUBEADM_VER=$(kubeadm version -o short 2>/dev/null | sed 's/^v//' || echo "")
+        if [[ -z "${INSTALLED_KUBEADM_VER}" || "${INSTALLED_KUBEADM_VER}" != "${K8S_VERSION}"* ]]; then
+            apt-mark unhold kubelet kubeadm kubectl 2>/dev/null || true
             install -m 0755 -d /etc/apt/keyrings
             curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" -o /etc/apt/keyrings/kubernetes-apt-keyring.asc 2>/dev/null || true
             echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
             apt-get update -qq 2>/dev/null || true
-            apt-get install -y --fix-missing kubelet kubeadm kubectl 2>/dev/null || true
+            apt-get install -y --fix-missing --allow-downgrades --allow-change-held-packages kubelet kubeadm kubectl 2>/dev/null || true
             apt-mark hold kubelet kubeadm kubectl 2>/dev/null || true
         fi
         ;;
@@ -173,7 +175,8 @@ case "${OS_ID}" in
             ${PKG_MGR} install -y containerd.io || ${PKG_MGR} install -y containerd 2>/dev/null || true
         fi
 
-        if ! command -v kubeadm &>/dev/null; then
+        INSTALLED_KUBEADM_VER=$(kubeadm version -o short 2>/dev/null | sed 's/^v//' || echo "")
+        if [[ -z "${INSTALLED_KUBEADM_VER}" || "${INSTALLED_KUBEADM_VER}" != "${K8S_VERSION}"* ]]; then
             cat >/etc/yum.repos.d/kubernetes.repo <<EOF
 [kubernetes]
 name=Kubernetes
@@ -187,8 +190,11 @@ EOF
         ;;
 
     *)
-        apt-get update -qq 2>/dev/null || true
-        apt-get install -y --fix-missing kubelet kubeadm kubectl containerd 2>/dev/null || true
+        INSTALLED_KUBEADM_VER=$(kubeadm version -o short 2>/dev/null | sed 's/^v//' || echo "")
+        if [[ -z "${INSTALLED_KUBEADM_VER}" || "${INSTALLED_KUBEADM_VER}" != "${K8S_VERSION}"* ]]; then
+            apt-get update -qq 2>/dev/null || true
+            apt-get install -y --fix-missing kubelet kubeadm kubectl containerd 2>/dev/null || true
+        fi
         ;;
 esac
 
