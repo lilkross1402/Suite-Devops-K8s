@@ -198,6 +198,8 @@ containerd config default | sed 's/disabled_plugins = \["cri"\]/disabled_plugins
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
 sed -i 's|config_path = ""|config_path = "/etc/containerd/certs.d"|g' /etc/containerd/config.toml
 
+rm -rf /etc/containerd/certs.d/* 2>/dev/null || true
+
 if [[ -n "${NEXUS_HOST}" ]]; then
     mkdir -p "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}"
     cat > "/etc/containerd/certs.d/${NEXUS_HOST}:${NEXUS_PORT}/hosts.toml" <<EOF
