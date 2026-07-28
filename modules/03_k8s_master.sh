@@ -154,7 +154,23 @@ _inject_nexus_mirrors_if_configured() {
     log_info "Injecting Nexus mirrors for ${CLR_BOLD_CYAN}${NEXUS_REGISTRY}${CLR_RESET} → containerd"
 
     local certs_dir="${CONTAINERD_CONFIG_DIR}/certs.d"
-    sudo mkdir -p "${certs_dir}"
+    sudo mkdir -p "${certs_dir}/${NEXUS_REGISTRY}" "${certs_dir}/_default"
+
+    sudo tee "${certs_dir}/${NEXUS_REGISTRY}/hosts.toml" > /dev/null <<EOF
+server = "http://${NEXUS_REGISTRY}"
+
+[host."http://${NEXUS_REGISTRY}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
+
+    sudo tee "${certs_dir}/_default/hosts.toml" > /dev/null <<EOF
+server = "http://${NEXUS_REGISTRY}"
+
+[host."http://${NEXUS_REGISTRY}"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+EOF
 
     local -a registries=(
         "docker.io|https://registry-1.docker.io"
