@@ -382,6 +382,7 @@ EOF
         local target_name="${img#*/}"
         local nexus_tag="${primary_ip}:${docker_port}/${target_name}"
         log_info "  [Inyectando a Nexus 3] ${img} -> ${nexus_tag}"
+        sudo docker rmi -f "${img}" 2>/dev/null || true
         sudo docker pull --platform linux/amd64 "${img}" 2>/dev/null || sudo docker pull "${img}" 2>/dev/null || true
         sudo docker tag  "${img}" "${nexus_tag}" 2>/dev/null || true
         sudo docker push "${nexus_tag}" || true
