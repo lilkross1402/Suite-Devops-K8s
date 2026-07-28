@@ -301,7 +301,7 @@ EOF
     sudo systemctl restart docker 2>/dev/null || true
     sleep 4
 
-    log_info "Esperando disponibilidad del conector Docker de Nexus en 127.0.0.1:${docker_port}..."
+    log_info "Esperando disponibilidad del conector Docker de Nexus en ${primary_ip}:${docker_port}..."
     local port_ready=0
     for i in $(seq 1 15); do
         if sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" &>/dev/null; then
@@ -312,20 +312,26 @@ EOF
     done
 
     if [[ "${port_ready}" -eq 1 ]]; then
-        log_success "Autenticado exitosamente en Nexus 3 Docker Registry (127.0.0.1:${docker_port})."
+        log_success "Autenticado exitosamente en Nexus 3 Docker Registry (${primary_ip}:${docker_port})."
+        # Login también con la IP real para que Docker acepte el push con ese tag
+        sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
     else
         log_warn "Conector 8082 aún inicializando — reintentando login directo..."
         sudo docker login "127.0.0.1:${docker_port}" -u admin -p "${admin_password}" || true
+        sudo docker login "${primary_ip}:${docker_port}" -u admin -p "${admin_password}" 2>/dev/null || true
     fi
 
     # 5. Pre-cargar e Inyectar las imágenes requeridas directamente en Nexus 3
-    log_info "Cargando e inyectando imágenes en la Consola Web de Nexus 3 (127.0.0.1:${docker_port})..."
+    # IMPORTANTE: Se tagea con la IP real del servidor Nexus (primary_ip) para que
+    # los nodos del clúster puedan descargar las imágenes usando esa misma IP.
+    log_info "Cargando e inyectando imágenes en Nexus 3 Registry (${primary_ip}:${docker_port})..."
     for img in "${REQUIRED_IMAGES[@]}"; do
         local target_name="${img#*/}"
-        log_info "  [Inyectando a Nexus 3 UI] ${img} -> 127.0.0.1:${docker_port}/${target_name}"
-        sudo docker pull "${img}" || true
-        sudo docker tag "${img}" "127.0.0.1:${docker_port}/${target_name}" || true
-        sudo docker push "127.0.0.1:${docker_port}/${target_name}"
+        local nexus_tag="${primary_ip}:${docker_port}/${target_name}"
+        log_info "  [Inyectando a Nexus 3] ${img} -> ${nexus_tag}"
+        sudo docker pull "${img}" 2>/dev/null || true
+        sudo docker tag  "${img}" "${nexus_tag}" 2>/dev/null || true
+        sudo docker push "${nexus_tag}" || true
     done
 
 _ensure_offline_binaries() {
