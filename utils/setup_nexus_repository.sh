@@ -60,6 +60,8 @@ REQUIRED_IMAGES=(
     "registry.k8s.io/etcd:3.5.10-0"
     "registry.k8s.io/etcd:3.5.12-0"
     "registry.k8s.io/etcd:3.5.14-0"
+    "registry.k8s.io/etcd:3.5.15-0"
+    "registry.k8s.io/etcd:3.5.16-0"
 
     "registry.k8s.io/coredns/coredns:v1.10.1"
     "registry.k8s.io/coredns/coredns:v1.11.1"
@@ -383,6 +385,12 @@ EOF
         sudo docker pull "${img}" 2>/dev/null || true
         sudo docker tag  "${img}" "${nexus_tag}" 2>/dev/null || true
         sudo docker push "${nexus_tag}" || true
+        if [[ "${target_name}" == coredns/coredns:* ]]; then
+            local alias_tag="${primary_ip}:${docker_port}/${target_name#coredns/}"
+            log_info "  [Alias coredns] ${img} -> ${alias_tag}"
+            sudo docker tag  "${img}" "${alias_tag}" 2>/dev/null || true
+            sudo docker push "${alias_tag}" || true
+        fi
     done
 
 _ensure_offline_binaries() {

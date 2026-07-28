@@ -54,6 +54,8 @@ MULTI_VERSION_IMAGES=(
     "registry.k8s.io/etcd:3.5.10-0"
     "registry.k8s.io/etcd:3.5.12-0"
     "registry.k8s.io/etcd:3.5.14-0"
+    "registry.k8s.io/etcd:3.5.15-0"
+    "registry.k8s.io/etcd:3.5.16-0"
 
     "registry.k8s.io/coredns/coredns:v1.10.1"
     "registry.k8s.io/coredns/coredns:v1.11.1"
