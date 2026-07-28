@@ -224,6 +224,23 @@ setup_nexus_server() {
     done
     log_success "Servidor Nexus 3 Enterprise activo en el puerto ${nexus_port}."
 
+    # Aceptar EULA / Deshabilitar onboarding wizard (requerido en Nexus 3 CE >= 3.70)
+    # Sin esto, docker login devuelve 403 incluso con credenciales correctas.
+    log_info "Aceptando EULA de Nexus 3 CE (nexus.onboarding.enabled=false)..."
+    sudo docker exec nexus bash -c "
+        mkdir -p /nexus-data/etc
+        if ! grep -q 'nexus.onboarding.enabled' /nexus-data/etc/nexus.properties 2>/dev/null; then
+            echo 'nexus.onboarding.enabled=false' >> /nexus-data/etc/nexus.properties
+        fi
+    " 2>/dev/null || true
+    sudo docker restart nexus
+    log_info "Reiniciando Nexus para aplicar configuración EULA (30 segundos)..."
+    sleep 30
+    until sudo docker exec nexus curl -fsSL http://localhost:8081/service/rest/v1/status &>/dev/null; do
+        sleep 5
+    done
+    log_success "Nexus 3 reiniciado y listo (EULA aceptada)."
+
     log_info "Verificando credenciales iniciales de Nexus..."
     local count=0
     until sudo docker exec nexus test -s /nexus-data/admin.password 2>/dev/null || [[ $count -ge 10 ]]; do
