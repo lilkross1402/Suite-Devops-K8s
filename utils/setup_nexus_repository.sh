@@ -389,7 +389,7 @@ EOF
         if [[ "${target_name}" == coredns/coredns:* ]]; then
             local alias_tag="${primary_ip}:${docker_port}/${target_name#coredns/}"
             log_info "  [Alias coredns] ${img} -> ${alias_tag}"
-            sudo docker tag  "${img}" "${alias_tag}" 2>/dev/null || true
+            sudo docker tag  "${img}" "${alias_tag}" 2>/dev/null || sudo docker tag "${nexus_tag}" "${alias_tag}" 2>/dev/null || true
             sudo docker push "${alias_tag}" || true
             sudo docker rmi -f "${alias_tag}" 2>/dev/null || true
         fi
