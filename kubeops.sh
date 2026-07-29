@@ -320,8 +320,10 @@ _print_menu_header() {
     fi
 
     local node_count
-    node_count=$(set +o pipefail; kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') || node_count="—"
-    [[ "${node_count}" == "0" && ! $(kubectl version --short 2>/dev/null) ]] && node_count="—"
+    node_count=$( (kubectl get nodes --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
+    if [[ "${node_count}" == "0" || -z "${node_count}" ]]; then
+        node_count="—"
+    fi
 
     printf "\n"
     printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_TL}"
