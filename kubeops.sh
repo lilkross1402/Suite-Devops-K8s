@@ -319,10 +319,10 @@ _print_menu_header() {
         cluster_detail=""
     fi
 
-    local node_count
-    node_count=$( (kubectl get nodes --request-timeout=2s --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
-    if [[ "${node_count}" == "0" || -z "${node_count}" ]]; then
-        node_count="—"
+    local node_count="—"
+    if command -v kubectl &>/dev/null; then
+        node_count=$( (timeout 0.3 kubectl get nodes --request-timeout=0.2s --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
+        [[ "${node_count}" == "0" || -z "${node_count}" ]] && node_count="—"
     fi
 
     printf "\n"
@@ -939,11 +939,6 @@ main() {
 
     # Load Nexus registry from state (if already configured from a previous run)
     ( state_load_nexus_env ) 2>/dev/null || true
-
-    # If offline/air-gap mode: prompt for Nexus registry (interactive only)
-    if [[ -t 0 ]]; then
-        _prompt_nexus_if_needed
-    fi
 
     # Direct run mode (non-interactive)
     if [[ -n "${KUBEOPS_DIRECT_RUN:-}" ]]; then

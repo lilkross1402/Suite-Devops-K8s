@@ -73,54 +73,30 @@ _probe_icmp() {
 declare -g _NET_MODE_CACHED=""
 
 net_detect_mode() {
-    # 0. Respetar override expl\u00edcito (--offline flag o variable de entorno)
-    if [[ "${KUBEOPS_FORCE_OFFLINE:-false}" == "true" || \
-          "${KUBEOPS_NETWORK_MODE:-}" == "airgap" ]]; then
+    # 0. Session cache or forced offline override
+    if [[ -n "${_NET_MODE_CACHED:-}" ]]; then
+        KUBEOPS_NETWORK_MODE="${_NET_MODE_CACHED}"
+        export KUBEOPS_NETWORK_MODE
+        return 0
+    fi
+    if [[ "${KUBEOPS_FORCE_OFFLINE:-false}" == "true" || "${KUBEOPS_NETWORK_MODE:-}" == "airgap" ]]; then
         KUBEOPS_NETWORK_MODE="airgap"
         _NET_MODE_CACHED="airgap"
         export KUBEOPS_NETWORK_MODE
-        log_info "Modo de red: ${CLR_BOLD_YELLOW}AIR-GAP${CLR_RESET} (forzado por --offline)"
         return 0
     fi
 
-    # 1. Usar cache de sesi\u00f3n (evita re-detecci\u00f3n en cada m\u00f3dulo)
-    if [[ -n "${_NET_MODE_CACHED}" ]]; then
-        KUBEOPS_NETWORK_MODE="${_NET_MODE_CACHED}"
-        log_debug "Modo de red (cache): ${KUBEOPS_NETWORK_MODE}"
-        export KUBEOPS_NETWORK_MODE
-        return 0
-    fi
-
-    log_info "Detectando modo de red..."
+    # 1. Ultra-fast 0.5s TCP probe to primary DNS endpoints (0.5s max total delay)
     local online=false
-    local probe_timeout=2   # Reducido de 3s a 2s
-
-    # 2. Prueba DNS (m\u00e1s r\u00e1pida que TCP en la mayor\u00eda de redes corporativas)
-    if command -v nslookup &>/dev/null; then
-        if timeout "${probe_timeout}" nslookup "pkgs.k8s.io" &>/dev/null 2>&1; then
-            online=true
-            log_debug "Reachable v\u00eda DNS: pkgs.k8s.io"
-        fi
-    fi
-
-    # 3. Prueba TCP solo si DNS fall\u00f3 (evita doble latencia en modo online)
-    if [[ "${online}" == "false" ]]; then
-        for host in "${NET_PROBE_HOSTS[@]}"; do
-            log_debug "Probando ${host}:${NET_PROBE_PORT} (TCP, ${probe_timeout}s)..."
-            if _probe_tcp "${host}" "${NET_PROBE_PORT}" "${probe_timeout}" 2>/dev/null; then
-                online=true
-                log_debug "Reachable v\u00eda TCP: ${host}"
-                break
-            fi
-        done
+    if timeout 0.5 bash -c "exec 3<>/dev/tcp/1.1.1.1/53" 2>/dev/null || \
+       timeout 0.5 bash -c "exec 3<>/dev/tcp/8.8.8.8/53" 2>/dev/null; then
+        online=true
     fi
 
     if [[ "${online}" == "true" ]]; then
         _NET_MODE_CACHED="online"
-        log_success "Modo de red: ${CLR_BOLD_GREEN}ONLINE${CLR_RESET}"
     else
         _NET_MODE_CACHED="airgap"
-        log_warn "Modo de red: ${CLR_BOLD_YELLOW}AIR-GAPPED${CLR_RESET} \u2014 usando assets offline"
     fi
 
     KUBEOPS_NETWORK_MODE="${_NET_MODE_CACHED}"
