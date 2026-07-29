@@ -41,6 +41,42 @@ readonly BG_YELLOW='\033[43m'
 readonly BG_BLUE='\033[44m'
 
 # ---------------------------------------------------------------------------
+# 256-Color Extended Design Tokens (UI Redesign v2.0)
+# ---------------------------------------------------------------------------
+readonly CLR_PRIMARY='\033[38;5;39m'         # #00afff  Bright Cobalt Blue
+readonly CLR_PRIMARY_DIM='\033[38;5;25m'     # #005faf  Medium Blue (subtle borders)
+readonly CLR_PRIMARY_MUTED='\033[38;5;18m'   # #000087  Deep Blue
+
+readonly CLR_ACCENT='\033[38;5;51m'          # #00ffff  Electric Cyan
+readonly CLR_ACCENT_SOFT='\033[38;5;38m'     # #00afd7  Soft Cyan
+
+readonly CLR_SUCCESS_256='\033[38;5;77m'     # Emerald Green
+readonly CLR_WARNING_256='\033[38;5;214m'    # Amber
+readonly CLR_DANGER_256='\033[38;5;196m'     # Pure Red
+
+readonly CLR_TEXT_HIGH='\033[38;5;255m'      # #eeeeee  Primary text
+readonly CLR_TEXT_MED='\033[38;5;252m'       # #d0d0d0  Secondary text
+readonly CLR_TEXT_LOW='\033[38;5;244m'       # #808080  Muted/Help text
+readonly CLR_TEXT_XLOW='\033[38;5;238m'      # #444444  Borders/Subtle metadata
+
+readonly CLR_BADGE_ONLINE='\033[38;5;77m'
+readonly CLR_BADGE_AIRGAP='\033[38;5;214m'
+readonly CLR_BADGE_INIT='\033[38;5;77m'
+readonly CLR_BADGE_NOINIT='\033[38;5;196m'
+
+# ── UI Unicode Constants ──────────────────────────────────────────────────
+readonly UI_ARROW='›'
+readonly UI_DOT_FILL='●'
+readonly UI_DOT_EMPTY='○'
+readonly UI_CORNER_TL='╭'
+readonly UI_CORNER_TR='╮'
+readonly UI_CORNER_BL='╰'
+readonly UI_CORNER_BR='╯'
+readonly UI_H_LINE='─'
+readonly UI_V_LINE='│'
+readonly UI_BULLET='·'
+
+# ---------------------------------------------------------------------------
 # Log Configuration
 # ---------------------------------------------------------------------------
 KUBEOPS_LOG_DIR="${KUBEOPS_LOG_DIR:-/var/log/kubeops}"

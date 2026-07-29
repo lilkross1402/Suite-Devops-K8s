@@ -276,62 +276,95 @@ _run_module() {
 # Main Menu UI
 # ---------------------------------------------------------------------------
 
+_print_banner() {
+    printf "${CLR_PRIMARY_DIM}"
+    printf '  ██╗  ██╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███████╗\n'
+    printf '  ██║ ██╔╝██║   ██║██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝\n'
+    printf "${CLR_PRIMARY}"
+    printf '  █████╔╝ ██║   ██║██████╔╝█████╗  ██║   ██║██████╔╝███████╗\n'
+    printf '  ██╔═██╗ ██║   ██║██╔══██╗██╔══╝  ██║   ██║██╔═══╝ ╚════██║\n'
+    printf "${CLR_ACCENT}"
+    printf '  ██║  ██╗╚██████╔╝██████╔╝███████╗╚██████╔╝██║     ███████║\n'
+    printf '  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝\n'
+    printf "${CLR_RESET}"
+    printf "  ${CLR_TEXT_XLOW}${UI_H_LINE}${UI_H_LINE}${UI_H_LINE}  "
+    printf "${CLR_TEXT_MED}Suite v${KUBEOPS_VERSION}  "
+    printf "${CLR_TEXT_XLOW}${UI_BULLET}  "
+    printf "${CLR_TEXT_LOW}Kubernetes Platform — Online / Air-Gapped${CLR_RESET}\n"
+}
+
 _print_menu_header() {
     clear
-    printf "${CLR_BOLD_CYAN}"
-    cat << 'BANNER'
-  ██╗  ██╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███████╗
-  ██║ ██╔╝██║   ██║██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝
-  █████╔╝ ██║   ██║██████╔╝█████╗  ██║   ██║██████╔╝███████╗
-  ██╔═██╗ ██║   ██║██╔══██╗██╔══╝  ██║   ██║██╔═══╝ ╚════██║
-  ██║  ██╗╚██████╔╝██████╔╝███████╗╚██████╔╝██║     ███████║
-  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝
-BANNER
-    printf "${CLR_RESET}"
+    _print_banner
 
-    # Title bar
-    printf "  ${CLR_BOLD_WHITE}Suite v%-8s${CLR_RESET}" "${KUBEOPS_VERSION}"
-    printf "${CLR_DIM}Aprovisionamiento y Gestión de Kubernetes — Online / Air-Gapped${CLR_RESET}\n"
-    printf "  ${CLR_DIM}%s${CLR_RESET}\n" "$(date '+%A, %d de %B de %Y  %H:%M:%S')"
-
-    # System context bar
-    printf "\n"
-    local mode_color="${CLR_BOLD_GREEN}"
-    local mode_label="● EN LÍNEA"
+    local mode_label mode_color
     if net_is_airgap 2>/dev/null; then
-        mode_color="${CLR_BOLD_YELLOW}"
-        mode_label="● AIR-GAPPED"
+        mode_label="AIR-GAPPED"
+        mode_color="${CLR_BADGE_AIRGAP}"
+    else
+        mode_label="EN LÍNEA"
+        mode_color="${CLR_BADGE_ONLINE}"
     fi
 
-    local cluster_init="${CLR_BOLD_RED}NO INICIALIZADO"
+    local cluster_label cluster_color cluster_detail
     if state_is_cluster_initialized 2>/dev/null; then
         local master_ip
         master_ip=$(state_get ".join.control_plane_endpoint" 2>/dev/null || echo "desconocido")
-        cluster_init="${CLR_BOLD_GREEN}INICIALIZADO  ${CLR_DIM}(${master_ip})${CLR_RESET}"
+        cluster_label="INICIALIZADO"
+        cluster_color="${CLR_BADGE_INIT}"
+        cluster_detail="(${master_ip})"
+    else
+        cluster_label="SIN INICIALIZAR"
+        cluster_color="${CLR_BADGE_NOINIT}"
+        cluster_detail=""
     fi
 
-    # Disable pipefail locally so kubectl failure just returns 0, not N/A
     local node_count
-    node_count=$(set +o pipefail; kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') || node_count="N/A"
-    [[ "${node_count}" == "0" && ! $(kubectl version --short 2>/dev/null) ]] && node_count="N/A"
+    node_count=$(set +o pipefail; kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ') || node_count="—"
+    [[ "${node_count}" == "0" && ! $(kubectl version --short 2>/dev/null) ]] && node_count="—"
 
-    printf "  %-20s ${mode_color}%-16s${CLR_RESET}" "Red:" "${mode_label}"
-    printf "  %-18s %b\n" "Clúster:" "${cluster_init}${CLR_RESET}"
-    printf "  %-20s %-16s" "Servidor:" "$(hostname 2>/dev/null | cut -c1-16)"
-    printf "  %-18s %s\n" "Nodos:" "${node_count}"
-    printf "  %-20s %-16s" "IP Principal:" "$(net_get_primary_ip 2>/dev/null | cut -c1-16)"
-    printf "  %-18s ${CLR_DIM}%s${CLR_RESET}\n" "Archivo de Estado:" "~/.kubeops/cluster-state.json"
+    printf "\n"
+    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_TL}"
+    printf '%.0s'"${UI_H_LINE}" {1..68}
+    printf "${UI_CORNER_TR}${CLR_RESET}\n"
+
+    printf "  ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}"
+    printf "  ${CLR_TEXT_LOW}Red    ${CLR_RESET} ${mode_color}${UI_DOT_FILL} %-12s${CLR_RESET}" "${mode_label}"
+    printf "  ${CLR_TEXT_XLOW}${UI_V_LINE}${CLR_RESET}  "
+    printf "${CLR_TEXT_LOW}Clúster  ${CLR_RESET} ${cluster_color}%-15s${CLR_RESET}" "${cluster_label}"
+    printf " ${CLR_TEXT_XLOW}%-17s${CLR_RESET}" "${cluster_detail}"
+    printf " ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}\n"
+
+    printf "  ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}"
+    printf "  ${CLR_TEXT_LOW}Host   ${CLR_RESET} ${CLR_TEXT_MED}%-14s${CLR_RESET}" "$(hostname 2>/dev/null | cut -c1-14)"
+    printf "  ${CLR_TEXT_XLOW}${UI_V_LINE}${CLR_RESET}  "
+    printf "${CLR_TEXT_LOW}Nodos    ${CLR_RESET} ${CLR_TEXT_MED}%-15s${CLR_RESET}" "${node_count}"
+    printf " ${CLR_TEXT_XLOW}%-17s${CLR_RESET}" "$(date '+%d %b %Y %H:%M')"
+    printf " ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}\n"
+
+    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_BL}"
+    printf '%.0s'"${UI_H_LINE}" {1..68}
+    printf "${UI_CORNER_BR}${CLR_RESET}\n"
 }
 
 _print_menu_separator() {
-    printf "\n  ${CLR_BOLD_BLUE}"
-    printf '%.0s─' {1..68}
+    printf "\n  ${CLR_TEXT_XLOW}"
+    printf '%.0s'"${UI_H_LINE}" {1..4}
+    printf "${CLR_PRIMARY_DIM}"
+    printf '%.0s'"${UI_H_LINE}" {1..60}
+    printf "${CLR_TEXT_XLOW}"
+    printf '%.0s'"${UI_H_LINE}" {1..4}
     printf "${CLR_RESET}\n"
 }
 
 _print_menu_section() {
-    local title="${1}"
-    printf "\n  ${CLR_BOLD_WHITE}${title}${CLR_RESET}\n"
+    local icon="${1}"
+    local title="${2}"
+    printf "\n  ${CLR_ACCENT_SOFT}${icon}${CLR_RESET}  "
+    printf "${CLR_TEXT_MED}${CLR_BOLD}${title}${CLR_RESET}\n"
+    printf "  ${CLR_PRIMARY_DIM}"
+    printf '%.0s'"${UI_H_LINE}" {1..36}
+    printf "${CLR_RESET}\n"
 }
 
 _print_menu_item() {
@@ -341,21 +374,22 @@ _print_menu_item() {
     local desc="${4}"
     local status="${5:-}"
 
-    printf "  ${CLR_BOLD_CYAN}[%s]${CLR_RESET} %s %-35s" "${num}" "${icon}" "${title}"
+    printf "  ${CLR_PRIMARY}[${CLR_TEXT_HIGH}${CLR_BOLD}%-2s${CLR_RESET}${CLR_PRIMARY}]${CLR_RESET}" "${num}"
+    printf " %s  " "${icon}"
+    printf "${CLR_TEXT_HIGH}%-42s${CLR_RESET}" "${title}"
     if [[ -n "${status}" ]]; then
-        printf "%s" "${status}"
-    else
-        printf "${CLR_DIM}%s${CLR_RESET}" "${desc}"
+        printf " %s" "${status}"
     fi
-    echo ""
+    printf "\n"
+    printf "       ${CLR_TEXT_XLOW}${UI_BULLET}${CLR_RESET} "
+    printf "${CLR_TEXT_LOW}%s${CLR_RESET}\n" "${desc}"
 }
 
 _print_menu() {
     _print_menu_header
-    _print_menu_separator
 
     # Infrastructure section
-    _print_menu_section "  🏗  APROVISIONAMIENTO DE INFRAESTRUCTURA"
+    _print_menu_section "🏗 " "APROVISIONAMIENTO DE INFRAESTRUCTURA"
 
     _print_menu_item "1" "🏭" "Registro Local de Imágenes" \
         "Desplegar Docker Registry v2 (Air-Gap)"
@@ -378,18 +412,14 @@ _print_menu() {
     _print_menu_item "R" "🧹" "Reset Remoto de Clúster Completo (SSH)" \
         "Limpiar K8s, CNI e IP Virtual en todos los nodos simultáneamente"
 
-    _print_menu_separator
-
     # Observability section
-    _print_menu_section "  📊  OPERACIONES DEL CLÚSTER"
+    _print_menu_section "📊" "OPERACIONES DEL CLÚSTER"
 
     _print_menu_item "6" "🔍" "Estado del Clúster y Tokens" \
         "Ver nodos, pods y comandos de unión"
 
-    _print_menu_separator
-
     # Stack section
-    _print_menu_section "  🚀  DESPLIEGUE DEL STACK DE ECOSISTEMA"
+    _print_menu_section "🚀" "DESPLIEGUE DEL STACK DE ECOSISTEMA"
 
     _print_menu_item "7" "📈" "Stack de Observabilidad 360°" \
         "Grafana + Prometheus + Loki + Promtail + Alertmanager (En 1-Clic)"
@@ -418,10 +448,8 @@ _print_menu() {
     _print_menu_item "K" "🤖" "Plataforma AI KAgent (Auto-Remediación)" \
         "IA Local (Ollama) + Control de Pods + Alertas Telegram"
 
-    _print_menu_separator
-
     # Utilities section
-    _print_menu_section "  🔧  UTILIDADES"
+    _print_menu_section "🔧" "UTILIDADES"
 
     _print_menu_item "C" "🧹" "Limpieza Profunda del Sistema" \
         "Purgar k8s, containerd, docker y datos CNI"
@@ -442,7 +470,7 @@ _print_menu() {
         "Salir de KubeOps-Suite"
 
     _print_menu_separator
-    printf "\n  ${CLR_BOLD_WHITE}Seleccione una opción${CLR_RESET} › "
+    printf "\n  ${CLR_PRIMARY}${UI_ARROW}${CLR_RESET} ${CLR_TEXT_HIGH}${CLR_BOLD}Seleccione una opción${CLR_RESET} ${CLR_PRIMARY_DIM}${UI_ARROW}${CLR_RESET} "
 }
 
 # ---------------------------------------------------------------------------
@@ -935,24 +963,32 @@ main() {
 
 _print_master_selector() {
     clear
-    cat << "EOF"
-  ██╗  ██╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███████╗
-  ██║ ██╔╝██║   ██║██╔══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝
-  █████╔╝ ██║   ██║██████╔╝█████╗  ██║   ██║██████╔╝███████╗
-  ██╔═██╗ ██║   ██║██╔══██╗██╔══╝  ██║   ██║██╔═══╝ ╚════██║
-  ██║  ██╗╚██████╔╝██████╔╝███████╗╚██████╔╝██║     ███████║
-  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝
-  Suite v1.0.0 — KubeOps & DevOps Platform (Plataforma Unificada)
-EOF
-    printf "  ${CLR_DIM}--------------------------------------------------------------------${CLR_RESET}\n\n"
-    printf "    ${CLR_BOLD_CYAN}🎯  SELECCIONAR MÓDULO O PLATAFORMA DE TRABAJO${CLR_RESET}\n\n"
-    printf "  [1] 🏗️   Aprovisionamiento y Gestión de Clústeres Kubernetes\n"
-    printf "           ${CLR_DIM}(HA, Air-Gap, Nodos, Istio, Kiali, Nexus, Observabilidad 360°, KAgent)${CLR_RESET}\n\n"
-    printf "  [2] 🔍  Auditoría, Análisis y Auto-Remediación SRE (DevOps Toolkit)\n"
-    printf "           ${CLR_DIM}(Auditoría completa, Manifiestos YAML, Auto-Remediación modular, Flujo Completo SRE)${CLR_RESET}\n\n"
-    printf "  [0] 🚪  Salir de la Plataforma\n\n"
-    printf "  ${CLR_DIM}--------------------------------------------------------------------${CLR_RESET}\n"
-    printf "  ${CLR_BOLD_WHITE}Seleccione una opción [0-2]: ${CLR_RESET}"
+    _print_banner
+
+    printf "\n"
+    printf "  ${CLR_TEXT_XLOW}"
+    printf '%.0s'"${UI_H_LINE}" {1..68}
+    printf "${CLR_RESET}\n"
+    printf "  ${CLR_ACCENT_SOFT}${CLR_BOLD}SELECCIONAR MÓDULO O PLATAFORMA DE TRABAJO${CLR_RESET}\n"
+    printf "  ${CLR_TEXT_XLOW}"
+    printf '%.0s'"${UI_H_LINE}" {1..68}
+    printf "${CLR_RESET}\n\n"
+
+    printf "  ${CLR_PRIMARY}[${CLR_TEXT_HIGH}${CLR_BOLD}1${CLR_RESET}${CLR_PRIMARY}]${CLR_RESET} "
+    printf "🏗️  ${CLR_TEXT_HIGH}${CLR_BOLD}Aprovisionamiento y Gestión de Clústeres Kubernetes${CLR_RESET}\n"
+    printf "       ${CLR_TEXT_XLOW}${UI_BULLET}${CLR_RESET} ${CLR_TEXT_LOW}HA, Air-Gap, Nodos, Istio, Kiali, Nexus, Observabilidad 360°, KAgent${CLR_RESET}\n\n"
+
+    printf "  ${CLR_PRIMARY}[${CLR_TEXT_HIGH}${CLR_BOLD}2${CLR_RESET}${CLR_PRIMARY}]${CLR_RESET} "
+    printf "🔍  ${CLR_TEXT_HIGH}${CLR_BOLD}Auditoría, Análisis y Auto-Remediación SRE (DevOps Toolkit)${CLR_RESET}\n"
+    printf "       ${CLR_TEXT_XLOW}${UI_BULLET}${CLR_RESET} ${CLR_TEXT_LOW}Auditoría completa, Manifiestos YAML, Auto-Remediación modular, Flujo SRE${CLR_RESET}\n\n"
+
+    printf "  ${CLR_TEXT_XLOW}[0]${CLR_RESET} "
+    printf "🚪  ${CLR_TEXT_LOW}Salir de la Plataforma${CLR_RESET}\n\n"
+
+    printf "  ${CLR_TEXT_XLOW}"
+    printf '%.0s'"${UI_H_LINE}" {1..68}
+    printf "${CLR_RESET}\n"
+    printf "  ${CLR_PRIMARY}${UI_ARROW}${CLR_RESET} ${CLR_TEXT_HIGH}${CLR_BOLD}Seleccione una opción [0-2]${CLR_RESET} ${CLR_PRIMARY_DIM}${UI_ARROW}${CLR_RESET} "
 }
 
 _master_selector_loop() {
