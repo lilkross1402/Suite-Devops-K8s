@@ -607,6 +607,71 @@ state_get_meta() {
     state_get ".metadata.${1}"
 }
 
+# ---------------------------------------------------------------------------
+# SRE FIX T1: state_resolve_kubeconfig — resuelve y exporta KUBECONFIG desde
+# múltiples fuentes en cascada. Reemplaza el bloque if/elif de 7 líneas que
+# estaba duplicado en 6+ scripts del directorio stack/.
+# Uso: state_resolve_kubeconfig || return 1
+# ---------------------------------------------------------------------------
+state_resolve_kubeconfig() {
+    # Si ya está configurado y el archivo existe, no hacer nada
+    if [[ -n "${KUBECONFIG:-}" && -f "${KUBECONFIG}" ]]; then
+        log_debug "KUBECONFIG ya resuelto: ${KUBECONFIG}"
+        return 0
+    fi
+
+    local -a candidates=(
+        "/etc/kubernetes/admin.conf"
+        "/root/.kube/config"
+        "${HOME}/.kube/config"
+    )
+
+    # También checar si hay una ruta guardada en el state
+    local state_path
+    state_path=$(state_get ".metadata.kubeconfig_path" 2>/dev/null || echo "")
+    if [[ -n "${state_path}" && "${state_path}" != "null" ]]; then
+        candidates=("${state_path}" "${candidates[@]}")
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+            export KUBECONFIG="${candidate}"
+            log_debug "KUBECONFIG resuelto: ${KUBECONFIG}"
+            return 0
+        fi
+    done
+
+    log_error "No se encontró un kubeconfig válido en ninguna ruta conocida."
+    log_error "Rutas buscadas: ${candidates[*]}"
+    log_error "Ejecute primero la opción [3] para inicializar el Máster o exporte KUBECONFIG manualmente."
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# SRE FIX C3: state_get_fresh_cert_key — genera un certificate-key fresco
+# bajo demanda para joins de Control Plane HA. Evita almacenar el cert-key
+# (que otorga acceso al PKI raíz) más tiempo del necesario en el state file.
+# ---------------------------------------------------------------------------
+state_get_fresh_cert_key() {
+    if ! command -v kubeadm &>/dev/null; then
+        log_error "kubeadm no encontrado — no se puede generar certificate-key"
+        return 1
+    fi
+    if [[ ! -f /etc/kubernetes/admin.conf ]]; then
+        log_error "admin.conf no encontrado — ¿el Control Plane está inicializado?"
+        return 1
+    fi
+    local fresh_key
+    fresh_key=$(sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | \
+                grep -E '^[a-f0-9]{64}$' | tail -1)
+    if [[ -z "${fresh_key}" ]]; then
+        log_error "No se pudo generar el certificate-key. Revise los logs de kubeadm."
+        return 1
+    fi
+    log_warn "Certificate-key generado (válido por 2 horas). No persistir en texto plano."
+    echo "${fresh_key}"
+}
+
 # ===========================================================================
 # Nexus Registry State (Air-Gap support)
 # ===========================================================================

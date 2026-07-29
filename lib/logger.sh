@@ -97,12 +97,54 @@ _timestamp() {
     date '+%Y-%m-%d %H:%M:%S'
 }
 
-# _write_log LEVEL MESSAGE: write structured log line to file
+# ---------------------------------------------------------------------------
+# SRE FIX A1: _write_log con fallback en cascada de 3 niveles.
+# Nivel 1: archivo principal (/var/log/kubeops/)
+# Nivel 2: directorio home (~/.kubeops/logs/kubeops-emergency-*)
+# Nivel 3: stderr puro — NUNCA silencio total
+# También emite JSON estructurado para Loki (*.jsonl) cuando Nivel 1 funciona.
+# ---------------------------------------------------------------------------
+declare -gi _LOG_WRITE_FAILURES=0
+readonly _LOG_MAX_FAILURES=5
+
 _write_log() {
     local level="${1}"
     local message="${2}"
+    local timestamp
+    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    local log_line="[${level}] ${timestamp} [op:${KUBEOPS_OPERATION_ID:-main}] [mod:${KUBEOPS_MODULE:-kubeops}] :: ${message}"
+
+    # Nivel 1: archivo principal
     _log_init
-    echo "[${level}] $(_timestamp) :: ${message}" >> "${KUBEOPS_LOG_FILE}" 2>/dev/null || true
+    if echo "${log_line}" >> "${KUBEOPS_LOG_FILE}" 2>/dev/null; then
+        _LOG_WRITE_FAILURES=0
+        # JSON estructurado para ingestion en Loki (archivo .jsonl paralelo)
+        local json_log="${KUBEOPS_LOG_DIR}/kubeops-structured-$(date +%Y%m%d).jsonl"
+        printf '{"ts":"%s","level":"%s","op_id":"%s","module":"%s","host":"%s","msg":"%s"}\n' \
+            "${timestamp}" "${level}" "${KUBEOPS_OPERATION_ID:-main}" \
+            "${KUBEOPS_MODULE:-kubeops}" "$(hostname -s 2>/dev/null || echo 'unknown')" \
+            "${message//\"/\'}" >> "${json_log}" 2>/dev/null || true
+        return 0
+    fi
+
+    # Nivel 2: fallback al directorio home del usuario
+    local fallback_log="${HOME}/.kubeops/logs/kubeops-emergency-$(date +%Y%m%d).log"
+    mkdir -p "$(dirname "${fallback_log}")" 2>/dev/null || true
+    if echo "${log_line}" >> "${fallback_log}" 2>/dev/null; then
+        (( _LOG_WRITE_FAILURES++ )) || true
+        if [[ "${_LOG_WRITE_FAILURES}" -eq 1 ]]; then
+            printf "\033[1;33m[ WARN ]\033[0m Logger degradado: usando fallback %s\n" \
+                "${fallback_log}" >&2
+        fi
+        return 0
+    fi
+
+    # Nivel 3: stderr puro — NUNCA silencio total
+    (( _LOG_WRITE_FAILURES++ )) || true
+    if [[ "${_LOG_WRITE_FAILURES}" -ge "${_LOG_MAX_FAILURES}" ]]; then
+        printf "\033[1;31m[ERROR ]\033[0m LOGGER FAILURE: No se puede escribir en ningun destino de log.\n" >&2
+    fi
+    printf "%s\n" "${log_line}" >&2
 }
 
 # ---------------------------------------------------------------------------

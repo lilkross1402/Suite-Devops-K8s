@@ -69,6 +69,19 @@ _install_helm() {
 _deploy_online() {
     log_info "[1/2] Desplegando kube-prometheus-stack (Prometheus + Grafana + Alertmanager)..."
 
+    # SRE FIX A4: generar contraseña aleatoria para Grafana (eliminar admin/admin en producción)
+    local grafana_password
+    grafana_password=$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 32 || \
+                       openssl rand -hex 16 2>/dev/null || \
+                       date +%s%N | sha256sum | head -c 32)
+    state_set_meta "grafana_admin_password" "${grafana_password}"
+    log_warn "╔══════════════════════════════════════════════════════════════╗"
+    log_warn "║  GRAFANA CREDENTIALS (guardar en lugar seguro)              ║"
+    log_warn "║  Usuario : admin                                            ║"
+    log_warn "║  Password: ${grafana_password}  ║"
+    log_warn "╚══════════════════════════════════════════════════════════════╝"
+    log_info  "  (Contraseña también guardada en state → kubeops --run state)"
+
     helm repo add prometheus-community \
         https://prometheus-community.github.io/helm-charts 2>/dev/null || true
     helm repo update
@@ -81,7 +94,7 @@ _deploy_online() {
         --kubeconfig="${KUBECONFIG}" \
         --set prometheus.prometheusSpec.retention=30d \
         --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=20Gi \
-        --set grafana.adminPassword="admin" \
+        --set grafana.adminPassword="${grafana_password}" \
         --set grafana.service.type=NodePort \
         --set grafana.service.nodePort=32000 \
         --set alertmanager.enabled=true \

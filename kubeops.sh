@@ -36,6 +36,7 @@ _source_lib "logger.sh"
 _source_lib "os_detect.sh"
 _source_lib "network_check.sh"
 _source_lib "state_manager.sh"
+_source_lib "slo_tracker.sh"
 
 # ---------------------------------------------------------------------------
 # Global constants
@@ -234,6 +235,9 @@ _prompt_nexus_if_needed() {
 _run_module() {
     local module="${1}"
     local script=""
+    # SRE FIX M1: inicializar correlation ID para cada ejecución de módulo
+    export KUBEOPS_OPERATION_ID="mod_${module}-$(date +%s%3N)-$$"
+    export KUBEOPS_MODULE="module_${module}"
 
     case "${module}" in
         1|registry)       script="${SUITE_ROOT}/modules/01_registry.sh" ;;
@@ -263,7 +267,8 @@ _run_module() {
     fi
 
     log_debug "Running module: ${script}"
-    bash "${script}"
+    # SLO tracking automático: registra duración y resultado de cada módulo
+    slo_timed_operation "module_${module}" bash "${script}"
     return $?
 }
 
@@ -430,8 +435,8 @@ _print_menu() {
     _print_menu_item "L" "📋" "Ver Registros (Logs)" \
         "Ver logs en tiempo real"
 
-    _print_menu_item "R" "🔄" "Reiniciar Estado" \
-        "Borrar estado guardado del clúster"
+    _print_menu_item "X" "🗑️ " "Reiniciar Estado del Clúster" \
+        "Borrar estado guardado (con backup automático previo)"
 
     _print_menu_item "Q" "🚪" "Salir" \
         "Salir de KubeOps-Suite"
@@ -783,7 +788,7 @@ _main_loop() {
                 clear
                 _handle_show_logs ;;
 
-            [rR])
+            [xX])
                 clear
                 _handle_reset_state ;;
 

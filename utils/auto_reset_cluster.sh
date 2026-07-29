@@ -234,7 +234,7 @@ rm -rf /etc/kubernetes \
 
 # 6. Restablecer containerd
 sed -i 's/disabled_plugins = \["cri"\]/disabled_plugins = []/g' /etc/containerd/config.toml 2>/dev/null || true
-(systemctl restart containerd >/dev/null 2>&1 &) || true
+systemctl restart containerd 2>/dev/null || true
 
 echo "NODE_RESET_OK"
 REMOTE

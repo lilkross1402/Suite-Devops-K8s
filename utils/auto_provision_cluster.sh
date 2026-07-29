@@ -54,6 +54,143 @@ _remote_script() {
 }
 
 # ---------------------------------------------------------------------------
+# SRE FIX C1: _run_parallel_phase — safe parallel executor with per-node PID
+# tracking. Aborts the entire pipeline if any node fails.
+# Usage: _run_parallel_phase "phase_name" node_func arg1 arg2 ... -- node1 node2
+# ---------------------------------------------------------------------------
+_run_parallel_phase() {
+    local phase_name="${1}"; shift
+    local -a target_nodes=("${@}")
+    # The actual function and args are embedded in target_nodes via the caller;
+    # here we only accept the node list and the function is passed as the first
+    # element before "--". Parse split:
+    #   _run_parallel_phase PHASE_NAME FUNC [FUNC_ARGS...] -- NODE1 NODE2 ...
+    local func_name="${target_nodes[0]}"
+    local -a func_args=()
+    local -a nodes=()
+    local parsing_nodes=false
+    for arg in "${target_nodes[@]:1}"; do
+        if [[ "${arg}" == "--" ]]; then
+            parsing_nodes=true
+            continue
+        fi
+        if [[ "${parsing_nodes}" == true ]]; then
+            nodes+=("${arg}")
+        else
+            func_args+=("${arg}")
+        fi
+    done
+
+    log_info "[${phase_name}] Ejecutando en paralelo en ${#nodes[@]} nodo(s): ${nodes[*]}"
+
+    local -a pids=()
+    declare -A pid_node_map
+
+    for node in "${nodes[@]}"; do
+        "${func_name}" "${node}" "${func_args[@]}" &
+        local pid=$!
+        pids+=("${pid}")
+        pid_node_map["${pid}"]="${node}"
+        log_debug "[${phase_name}] PID ${pid} → ${node}"
+    done
+
+    local failed=0
+    for pid in "${pids[@]}"; do
+        local node="${pid_node_map[${pid}]}"
+        if ! wait "${pid}"; then
+            local exit_code=$?
+            log_error "[${phase_name}] FALLÓ en nodo ${node} (exit=${exit_code})"
+            state_set_meta "sre_phase_${phase_name}_fail_${node//\./_}" "$(date -u +%s)"
+            (( failed++ )) || true
+        else
+            log_success "[${phase_name}] OK → ${node}"
+        fi
+    done
+
+    if [[ "${failed}" -gt 0 ]]; then
+        log_fatal "[${phase_name}] ${failed} nodo(s) fallaron. Abortando pipeline antes de continuar."
+    fi
+    log_success "[${phase_name}] Completado exitosamente en todos los nodos."
+}
+
+# ---------------------------------------------------------------------------
+# SRE FIX C2: _join_control_plane — retrying, verified kubeadm CP join.
+# Verifica que el nodo aparezca en el API Server antes de reportar éxito.
+# ---------------------------------------------------------------------------
+_join_control_plane() {
+    local node="${1}"
+    local join_cmd="${2}"
+    local cert_key="${3}"
+    local master1_ip="${4}"
+    local max_retries=2
+    local attempt=0
+
+    while [[ "${attempt}" -lt "${max_retries}" ]]; do
+        log_info "  [CP Join] Intento $((attempt+1))/${max_retries} → ${node}"
+        if _ssh "${SSH_USER}@${node}" \
+               "sudo ${join_cmd} --control-plane --certificate-key ${cert_key} 2>&1"; then
+            # Dar tiempo al kubelet para registrar el nodo
+            log_info "  [CP Join] Esperando registro del nodo ${node} en el API Server..."
+            local wait_secs=0
+            while [[ "${wait_secs}" -lt 60 ]]; do
+                if _ssh "${SSH_USER}@${master1_ip}" \
+                   "sudo kubectl get node --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null" \
+                   | grep -qF "${node}"; then
+                    log_success "  [CP Join] Nodo ${node} registrado en el API Server."
+                    state_set_meta "cp_join_$(date +%s)" "${node}"
+                    return 0
+                fi
+                sleep 5
+                (( wait_secs += 5 )) || true
+            done
+            log_warn "  [CP Join] El join ejecutó pero ${node} no apareció en el API Server en 60s."
+        fi
+        (( attempt++ )) || true
+        if [[ "${attempt}" -lt "${max_retries}" ]]; then
+            log_warn "  [CP Join] Reintentando en 20s..."
+            sleep 20
+        fi
+    done
+
+    log_error "  FALLO CRÍTICO: ${node} no pudo unirse al Control Plane HA (${max_retries} intentos)."
+    log_error "  El quorum de etcd puede estar comprometido. Verifique: etcdctl member list"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# SRE FIX T2: wait_for_condition — polling activo con backoff exponencial.
+# Reemplaza todos los sleep estáticos en puntos de sincronización críticos.
+# Usage: wait_for_condition "descripción" MAX_SECS cmd arg1 arg2...
+# ---------------------------------------------------------------------------
+wait_for_condition() {
+    local description="${1}"
+    local max_seconds="${2}"
+    shift 2
+    local -a check_cmd=("${@}")
+
+    local start_ts
+    start_ts=$(date +%s)
+    local backoff=2
+
+    log_info "Esperando: ${description} (timeout: ${max_seconds}s)..."
+    while true; do
+        if "${check_cmd[@]}" &>/dev/null 2>&1; then
+            local elapsed=$(( $(date +%s) - start_ts ))
+            log_success "${description} — disponible tras ${elapsed}s"
+            return 0
+        fi
+        local elapsed=$(( $(date +%s) - start_ts ))
+        if [[ "${elapsed}" -ge "${max_seconds}" ]]; then
+            log_error "Timeout (${max_seconds}s) esperando: ${description}"
+            return 1
+        fi
+        log_debug "${description}: reintentando en ${backoff}s... (${elapsed}s/${max_seconds}s)"
+        sleep "${backoff}"
+        backoff=$(( backoff < 30 ? backoff * 2 : 30 ))
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Phase 0: Ensure kubeops-suite exists on every remote node
 # ---------------------------------------------------------------------------
 _phase0_sync_repo() {
@@ -600,27 +737,19 @@ auto_provision_ha_cluster() {
     log_success "Conectividad SSH verificada en todos los nodos."
 
     # ── PASO 2/6: Sincronizar repo en todos los nodos (En paralelo) ─────────
+    # SRE FIX C1: usar _run_parallel_phase para detectar fallos por nodo.
     log_info "[Paso 2/6] Sincronizando kubeops-suite en los nodos remotos (en paralelo)..."
-    local pids=()
-    for node in "${all_nodes[@]}"; do
-        _phase0_sync_repo "${node}" &
-        pids+=($!)
-    done
-    for pid in "${pids[@]}"; do
-        wait "${pid}" || true
-    done
+    _run_parallel_phase "sync_repo" _phase0_sync_repo -- "${all_nodes[@]}"
     log_success "kubeops-suite sincronizado en todos los nodos."
 
     # ── PASO 3/6: Instalar prereqs en todos los nodos (En paralelo) ─────────
     log_info "[Paso 3/6] Instalando prerequisitos K8s (containerd, kubeadm=${k8s_version_full}) en paralelo en todos los nodos..."
-    pids=()
-    for node in "${all_nodes[@]}"; do
-        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" "${nexus_host}" "${nexus_docker_port}" &
-        pids+=($!)
-    done
-    for pid in "${pids[@]}"; do
-        wait "${pid}" || true
-    done
+    # Wrapper para pasar args adicionales a través de _run_parallel_phase
+    _install_prereqs_wrapper() {
+        local node="${1}"
+        _phase1_install_prereqs "${node}" "${k8s_version}" "${k8s_version_full}" "${nexus_host}" "${nexus_docker_port}"
+    }
+    _run_parallel_phase "install_k8s" _install_prereqs_wrapper -- "${all_nodes[@]}"
 
     # Verificación estricta de binario kubeadm en todos los nodos
     local kubeadm_missing=0
@@ -642,8 +771,11 @@ auto_provision_ha_cluster() {
         _phase2_deploy_vip "${master_ips[$i]}" "${vip_ip}" "${priorities[$i]}" \
             "${master1_ip}" "${master2_ip}" "${master3_ip}"
     done
-    log_success "Virtual IP ${vip_ip}:8443 activa."
-    sleep 5  # Esperar convergencia VRRP
+    log_success "Virtual IP ${vip_ip}:8443 desplegada. Esperando convergencia VRRP..."
+    # SRE FIX T2: polling activo en lugar de sleep estático
+    wait_for_condition "VIP VRRP ${vip_ip}:8443" 60 \
+        bash -c "nc -z -w 3 '${vip_ip}' 8443" || \
+        log_warn "VIP ${vip_ip}:8443 no responde aún — puede ser normal en la primera convergencia VRRP"
 
     # ── PASO 5/6: kubeadm init en Máster 1 ──────────────────────────────────
     log_info "[Paso 5/6] Inicializando Control Plane Primario en ${master1_ip} (K8s v${k8s_version_full})..."
@@ -766,14 +898,25 @@ REMOTE
         "sudo kubeadm token create --print-join-command 2>/dev/null")
 
     # ── PASO 6a/6: Unir Másters Secundarios ─────────────────────────────────
+    # SRE FIX C2: usar _join_control_plane con retry y verificación en API Server.
     log_info "[Paso 6/6] Uniendo Másters Secundarios al Control Plane HA..."
     for ((i=1; i<${#master_ips[@]}; i++)); do
         local node="${master_ips[$i]}"
         log_info "  Verificando Control Plane ${node}..."
         if ! _ssh "${ssh_user}@${node}" "test -f /etc/kubernetes/kubelet.conf" 2>/dev/null; then
-            log_info "  Uniendo Control Plane ${node} al clúster..."
-            _ssh "${ssh_user}@${node}" "sudo kubeadm reset -f 2>/dev/null || true; sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf /etc/cni/net.d; sudo systemctl restart containerd 2>/dev/null || true; sleep 2"
-            _ssh "${ssh_user}@${node}" "sudo ${join_cmd} --control-plane --certificate-key ${cert_key}" || true
+            log_info "  Preparando nodo ${node} para unión al Control Plane..."
+            _ssh "${ssh_user}@${node}" \
+                "sudo kubeadm reset -f 2>/dev/null || true; \
+                 sudo rm -rf /etc/kubernetes/manifests /etc/kubernetes/pki \
+                             /etc/kubernetes/admin.conf /etc/kubernetes/kubelet.conf \
+                             /etc/cni/net.d; \
+                 sudo systemctl restart containerd 2>/dev/null || true"
+            # SRE FIX T2: polling activo en lugar de sleep 2
+            wait_for_condition "containerd en ${node}" 30 \
+                _ssh "${ssh_user}@${node}" "test -S /var/run/containerd/containerd.sock"
+            # SRE FIX C2: join con retry y verificación
+            _join_control_plane "${node}" "${join_cmd}" "${cert_key}" "${master1_ip}" || \
+                log_fatal "Control Plane ${node} no pudo unirse. Abortando — revisar etcd quorum."
         else
             log_info "  Control Plane ${node} ya está unido activamente."
         fi
@@ -789,8 +932,11 @@ cp -f /etc/kubernetes/admin.conf /root/.kube/config 2>/dev/null || true
 chown -R "${U}:${U}" "${HOME_DIR}/.kube" 2>/dev/null || true
 echo "export KUBECONFIG=/etc/kubernetes/admin.conf" | tee /etc/profile.d/k8s.sh >/dev/null || true
 
-# Apuntar kubelet y kubectl al API Server principal (puerto 6443) en cada nodo del Control Plane
-sed -i "s|server: https://.*:8443|server: https://${M1}:6443|g; s|server: https://127.0.0.1:6443|server: https://${M1}:6443|g" /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf /root/.kube/config "${HOME_DIR}/.kube/config" 2>/dev/null || true
+# Apuntar kubelet y kubectl al API Server principal (puerto 6443)
+sed -i "s|server: https://.*:8443|server: https://${M1}:6443|g; \
+         s|server: https://127.0.0.1:6443|server: https://${M1}:6443|g" \
+    /etc/kubernetes/kubelet.conf /etc/kubernetes/admin.conf \
+    /root/.kube/config "${HOME_DIR}/.kube/config" 2>/dev/null || true
 systemctl restart kubelet 2>/dev/null || true
 REMOTE
     done
