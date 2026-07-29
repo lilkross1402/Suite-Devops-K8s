@@ -326,9 +326,7 @@ _print_menu_header() {
     fi
 
     printf "\n"
-    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_TL}"
-    printf '%.0s'"${UI_H_LINE}" {1..68}
-    printf "${UI_CORNER_TR}${CLR_RESET}\n"
+    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_TL}%s${UI_CORNER_TR}${CLR_RESET}\n" "${UI_LINE_68}"
 
     printf "  ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}"
     printf "  ${CLR_TEXT_LOW}Red    ${CLR_RESET} ${mode_color}${UI_DOT_FILL} %-12s${CLR_RESET}" "${mode_label}"
@@ -344,19 +342,12 @@ _print_menu_header() {
     printf " ${CLR_TEXT_XLOW}%-17s${CLR_RESET}" "$(date '+%d %b %Y %H:%M')"
     printf " ${CLR_PRIMARY_DIM}${UI_V_LINE}${CLR_RESET}\n"
 
-    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_BL}"
-    printf '%.0s'"${UI_H_LINE}" {1..68}
-    printf "${UI_CORNER_BR}${CLR_RESET}\n"
+    printf "  ${CLR_PRIMARY_DIM}${UI_CORNER_BL}%s${UI_CORNER_BR}${CLR_RESET}\n" "${UI_LINE_68}"
 }
 
 _print_menu_separator() {
-    printf "\n  ${CLR_TEXT_XLOW}"
-    printf '%.0s'"${UI_H_LINE}" {1..4}
-    printf "${CLR_PRIMARY_DIM}"
-    printf '%.0s'"${UI_H_LINE}" {1..60}
-    printf "${CLR_TEXT_XLOW}"
-    printf '%.0s'"${UI_H_LINE}" {1..4}
-    printf "${CLR_RESET}\n"
+    printf "\n  ${CLR_TEXT_XLOW}%s${CLR_PRIMARY_DIM}%s${CLR_TEXT_XLOW}%s${CLR_RESET}\n" \
+        "${UI_LINE_4}" "${UI_LINE_60}" "${UI_LINE_4}"
 }
 
 _print_menu_section() {
@@ -364,9 +355,7 @@ _print_menu_section() {
     local title="${2}"
     printf "\n  ${CLR_ACCENT_SOFT}${icon}${CLR_RESET}  "
     printf "${CLR_TEXT_MED}${CLR_BOLD}${title}${CLR_RESET}\n"
-    printf "  ${CLR_PRIMARY_DIM}"
-    printf '%.0s'"${UI_H_LINE}" {1..36}
-    printf "${CLR_RESET}\n"
+    printf "  ${CLR_PRIMARY_DIM}%s${CLR_RESET}\n" "${UI_LINE_36}"
 }
 
 _print_menu_item() {
@@ -963,13 +952,9 @@ _print_master_selector() {
     _print_banner
 
     printf "\n"
-    printf "  ${CLR_TEXT_XLOW}"
-    printf '%.0s'"${UI_H_LINE}" {1..68}
-    printf "${CLR_RESET}\n"
+    printf "  ${CLR_TEXT_XLOW}%s${CLR_RESET}\n" "${UI_LINE_68}"
     printf "  ${CLR_ACCENT_SOFT}${CLR_BOLD}SELECCIONAR MÓDULO O PLATAFORMA DE TRABAJO${CLR_RESET}\n"
-    printf "  ${CLR_TEXT_XLOW}"
-    printf '%.0s'"${UI_H_LINE}" {1..68}
-    printf "${CLR_RESET}\n\n"
+    printf "  ${CLR_TEXT_XLOW}%s${CLR_RESET}\n\n" "${UI_LINE_68}"
 
     printf "  ${CLR_PRIMARY}[${CLR_TEXT_HIGH}${CLR_BOLD}1${CLR_RESET}${CLR_PRIMARY}]${CLR_RESET} "
     printf "🏗️  ${CLR_TEXT_HIGH}${CLR_BOLD}Aprovisionamiento y Gestión de Clústeres Kubernetes${CLR_RESET}\n"
@@ -982,9 +967,7 @@ _print_master_selector() {
     printf "  ${CLR_TEXT_XLOW}[0]${CLR_RESET} "
     printf "🚪  ${CLR_TEXT_LOW}Salir de la Plataforma${CLR_RESET}\n\n"
 
-    printf "  ${CLR_TEXT_XLOW}"
-    printf '%.0s'"${UI_H_LINE}" {1..68}
-    printf "${CLR_RESET}\n"
+    printf "  ${CLR_TEXT_XLOW}%s${CLR_RESET}\n" "${UI_LINE_68}"
     printf "  ${CLR_PRIMARY}${UI_ARROW}${CLR_RESET} ${CLR_TEXT_HIGH}${CLR_BOLD}Seleccione una opción [0-2]${CLR_RESET} ${CLR_PRIMARY_DIM}${UI_ARROW}${CLR_RESET} "
 }
 

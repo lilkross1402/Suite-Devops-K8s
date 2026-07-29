@@ -75,6 +75,10 @@ readonly UI_CORNER_BR='╯'
 readonly UI_H_LINE='─'
 readonly UI_V_LINE='│'
 readonly UI_BULLET='·'
+readonly UI_LINE_68='────────────────────────────────────────────────────────────────────'
+readonly UI_LINE_60='────────────────────────────────────────────────────────────'
+readonly UI_LINE_36='────────────────────────────────────'
+readonly UI_LINE_4='────'
 
 # ---------------------------------------------------------------------------
 # Log Configuration
