@@ -114,8 +114,8 @@ show_banner() {
     # Estado rápido del clúster
     if command -v kubectl &>/dev/null 2>&1; then
         local nodes ready
-        nodes=$( (kubectl get nodes --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
-        ready=$( (kubectl get nodes --no-headers 2>/dev/null || echo "") | grep -c " Ready " || echo "0" )
+        nodes=$( (kubectl get nodes --request-timeout=2s --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
+        ready=$( (kubectl get nodes --request-timeout=2s --no-headers 2>/dev/null || echo "") | grep -c " Ready " || echo "0" )
         echo -e "  ${DIM}Clúster: ${nodes} nodos | Ready: ${ready}${NC}"
         if [[ -n "$NAMESPACE" ]]; then
             echo -e "  ${DIM}Namespace activo: ${NAMESPACE}${NC}"

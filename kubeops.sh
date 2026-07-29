@@ -320,7 +320,7 @@ _print_menu_header() {
     fi
 
     local node_count
-    node_count=$( (kubectl get nodes --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
+    node_count=$( (kubectl get nodes --request-timeout=2s --no-headers 2>/dev/null || echo "") | wc -l | tr -d ' ' )
     if [[ "${node_count}" == "0" || -z "${node_count}" ]]; then
         node_count="—"
     fi

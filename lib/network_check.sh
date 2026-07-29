@@ -40,18 +40,13 @@ KUBEOPS_NETWORK_MODE="${KUBEOPS_NETWORK_MODE:-}"
 _probe_tcp() {
     local host="${1}"
     local port="${2}"
-    local timeout="${3}"
-    # Use bash's /dev/tcp if available, fallback to nc
-    if bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null; then
-        exec 3>&- 2>/dev/null || true
-        return 0
-    elif command -v nc &>/dev/null; then
-        nc -z -w "${timeout}" "${host}" "${port}" 2>/dev/null
-        return $?
-    elif command -v timeout &>/dev/null && command -v curl &>/dev/null; then
-        timeout "${timeout}" curl -s --connect-timeout "${timeout}" \
-            "http://${host}:${port}" -o /dev/null 2>/dev/null
-        return $?
+    local timeout="${3:-2}"
+
+    if command -v timeout &>/dev/null; then
+        timeout "${timeout}" bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null && return 0
+    fi
+    if command -v nc &>/dev/null; then
+        nc -z -w "${timeout}" "${host}" "${port}" 2>/dev/null && return 0
     fi
     return 1
 }
